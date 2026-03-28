@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Peekabrowser</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script>document.addEventListener('contextmenu', e => e.preventDefault());</script>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Tab bar (left column, 56px) -->
+      <nav id="tab-bar">
+        <div id="tab-list"></div>
+        <div id="tab-actions">
+          <button class="tab-btn action-btn" id="reload-btn" title="Reload (⌘R)">↻</button>
+          <button class="tab-btn action-btn" id="settings-btn" title="Settings">⚙</button>
+          <div id="width-controls">
+            <button class="width-btn" data-width="short" title="Narrow">S</button>
+            <button class="width-btn active" data-width="medium" title="Medium">M</button>
+            <button class="width-btn" data-width="long" title="Wide">L</button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Content area (fills remaining width) -->
+      <main id="content-area">
+        <!-- Welcome screen (shown when no tab selected) -->
+        <div id="welcome-screen">
+          <div class="welcome-inner">
+            <div class="welcome-logo">🌊</div>
+            <h2>Peekabrowser</h2>
+            <p>Select a destination from the left to get started</p>
+            <div class="quick-tips">
+              <div class="tip">
+                <kbd>⌘⇧A</kbd>
+                <span>Toggle sidebar</span>
+              </div>
+              <div class="tip">
+                <span class="tip-icon">⌘C ⌘C</span>
+                <span>Send clipboard to active destination</span>
+              </div>
+              <div class="tip">
+                <kbd>⌘⇧S</kbd>
+                <span>Screenshot to AI</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+
+    <!-- Toast notification -->
+    <div id="copy-toast"></div>
+  </body>
+</html>

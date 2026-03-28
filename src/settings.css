@@ -1,0 +1,279 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1a1a1a;
+  --bg2: #242424;
+  --bg-hover: #2e2e2e;
+  --bg-active: #3a3a3a;
+  --text: #f0f0f0;
+  --text-muted: #888;
+  --accent: #4a9eff;
+  --border: rgba(255, 255, 255, 0.08);
+  --radius: 8px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  color: var(--text);
+}
+
+#settings-app {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 28px 24px;
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 24px;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+section {
+  margin-bottom: 28px;
+}
+
+/* ─── Destination list ─── */
+#destinations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.dest-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+
+.dest-item .icon { font-size: 20px; width: 28px; text-align: center; flex-shrink: 0; }
+
+.dest-item .info { flex: 1; min-width: 0; }
+
+.dest-item .name { font-weight: 500; margin-bottom: 2px; }
+
+.dest-item .url {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dest-item .edit-btn,
+.dest-item .remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.dest-item .edit-btn:hover {
+  background: rgba(74, 158, 255, 0.15);
+  color: var(--accent);
+}
+
+.dest-item .remove-btn:hover {
+  background: rgba(255, 60, 60, 0.15);
+  color: #ff4444;
+}
+
+/* ─── Preset chips ─── */
+#preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.preset-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 5px 12px;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.preset-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.preset-chip-add {
+  border-style: dashed;
+  color: var(--accent);
+}
+
+.preset-chip-add:hover {
+  background: rgba(74, 158, 255, 0.1);
+}
+
+/* ─── Form ─── */
+#add-form {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 28px;
+}
+
+#add-form h2 { margin-bottom: 12px; }
+
+.form-group {
+  margin-bottom: 12px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.form-group input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+.form-group input:focus {
+  border-color: var(--accent);
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ─── Buttons ─── */
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-primary:hover { opacity: 0.85; }
+
+.btn-secondary {
+  background: var(--bg-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 18px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover { background: var(--bg-active); }
+
+/* ─── Shortcuts ─── */
+.shortcuts-section {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.shortcut-row kbd {
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text);
+  min-width: 80px;
+  text-align: center;
+}
+
+.shortcut-key {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  outline: none;
+  user-select: none;
+}
+
+.shortcut-key:hover {
+  border-color: var(--accent) !important;
+  color: #fff;
+}
+
+.shortcut-key.recording {
+  border-color: var(--accent) !important;
+  background: rgba(74, 158, 255, 0.15) !important;
+  color: #fff;
+  animation: pulse-border 1s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74, 158, 255, 0.4); }
+  50% { box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.2); }
+}
+
+.shortcut-divider {
+  border-top: 1px solid var(--border);
+  margin: 10px 0 6px;
+}
+
+.fixed-row kbd {
+  opacity: 0.6;
+}
+
+.fixed-row span {
+  opacity: 0.6;
+}
+
+.hint-row {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.hidden { display: none !important; }

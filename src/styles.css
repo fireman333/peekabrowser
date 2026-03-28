@@ -1,0 +1,344 @@
+/* Airy Sidebar - Global Styles */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --tab-bar-width: 56px;
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #242424;
+  --bg-hover: #2e2e2e;
+  --bg-active: #3a3a3a;
+  --text-primary: #f0f0f0;
+  --text-muted: #888;
+  --accent: #4a9eff;
+  --border: rgba(255, 255, 255, 0.08);
+  --radius: 8px;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* ─── Tab Bar ─────────────────────────────────────────── */
+#tab-bar {
+  width: var(--tab-bar-width);
+  min-width: var(--tab-bar-width);
+  height: 100%;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0 4px;
+  gap: 2px;
+  overflow: hidden;
+}
+
+#tab-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  width: 100%;
+  overflow: hidden;
+}
+
+#tab-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  border-radius: var(--radius);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+  position: relative;
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+}
+
+.tab-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  transform: scale(1.05);
+}
+
+.tab-btn.active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.tab-favicon {
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.tab-btn.active::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.tab-btn .tab-tooltip {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: #333;
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+}
+
+.tab-btn:hover .tab-tooltip {
+  opacity: 1;
+}
+
+/* ─── Page sub-tabs (numbered dots under each destination) ─── */
+.page-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  padding: 0 4px 4px;
+}
+
+.page-dot-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.page-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+}
+
+.page-dot:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.page-dot.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.page-close-btn {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: none;
+  background: #555;
+  color: #fff;
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  -webkit-app-region: no-drag;
+  z-index: 10;
+}
+
+.page-dot-wrap:hover .page-close-btn {
+  display: flex;
+}
+
+.page-close-btn:hover {
+  background: #ff4444;
+}
+
+.action-btn {
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+#width-controls {
+  display: flex;
+  gap: 1px;
+  padding: 2px 4px 0;
+}
+
+.width-btn {
+  flex: 1;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.width-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.width-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ─── Content Area ────────────────────────────────────── */
+#content-area {
+  flex: 1;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ─── Welcome Screen ──────────────────────────────────── */
+#welcome-screen {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.welcome-inner {
+  text-align: center;
+  max-width: 260px;
+}
+
+.welcome-logo {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.welcome-inner h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.welcome-inner p {
+  color: var(--text-muted);
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.quick-tips {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+.tip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.tip kbd,
+.tip .tip-icon {
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-primary);
+  white-space: nowrap;
+  min-width: 70px;
+  text-align: center;
+}
+
+
+/* ─── Utilities ───────────────────────────────────────── */
+.hidden {
+  display: none !important;
+}
+
+/* ─── Scrollbar ───────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+

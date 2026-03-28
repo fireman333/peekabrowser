@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for Airy sidebar",
+  "windows": ["main", "sidebar", "overlay", "settings-window", "page-*", "picker"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-create",
+    "core:window:allow-close",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-set-focus",
+    "core:window:allow-minimize",
+    "core:window:allow-start-dragging",
+    "core:app:allow-version",
+    "core:app:allow-name",
+    "core:tray:allow-set-icon",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-write-image",
+    "shell:allow-open"
+  ]
+}

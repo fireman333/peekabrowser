@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Peekabrowser Settings</title>
+  <link rel="stylesheet" href="/src/settings.css" />
+  <script type="module" src="/src/settings.ts" defer></script>
+</head>
+<body>
+  <div id="settings-app">
+    <h1>Settings</h1>
+
+    <section>
+      <h2>Destinations</h2>
+      <p class="hint">Manage your search engines and AI destinations. Drag to reorder.</p>
+      <div id="destinations-list"></div>
+      <button id="add-btn" class="btn-secondary">+ Add Destination</button>
+    </section>
+
+    <div id="add-form" class="hidden">
+      <h2>Add Destination</h2>
+      <div id="preset-chips"></div>
+      <div class="form-group">
+        <label>Name</label>
+        <input id="new-name" type="text" placeholder="Enter name" />
+      </div>
+      <div class="form-group">
+        <label>URL</label>
+        <input id="new-url" type="text" placeholder="Paste URL" />
+      </div>
+      <div class="form-group">
+        <label>Icon (emoji)</label>
+        <input id="new-icon" type="text" placeholder="Leave empty to use website icon" maxlength="2" />
+      </div>
+      <div class="form-actions">
+        <button id="save-btn" class="btn-primary">Save</button>
+        <button id="cancel-btn" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+
+    <section class="shortcuts-section">
+      <h2>Keyboard Shortcuts</h2>
+      <p class="hint">Click on a shortcut to change it, then press a new key combination.</p>
+
+      <div class="shortcut-row" data-action="toggle_sidebar">
+        <kbd class="shortcut-key" tabindex="0"></kbd>
+        <span>Toggle sidebar</span>
+      </div>
+      <div class="shortcut-row" data-action="screenshot">
+        <kbd class="shortcut-key" tabindex="0"></kbd>
+        <span>Screenshot to AI</span>
+      </div>
+      <div class="shortcut-row" data-action="export">
+        <kbd class="shortcut-key" tabindex="0"></kbd>
+        <span>Copy last AI response</span>
+      </div>
+
+      <div class="shortcut-divider"></div>
+      <div class="shortcut-row fixed-row"><kbd>⌘C ⌘C</kbd> <span>Quick send clipboard</span></div>
+      <div class="shortcut-row fixed-row"><kbd>⌘R</kbd> <span>Reload active page</span></div>
+      <div class="shortcut-row fixed-row"><kbd>⌘W</kbd> <span>Close active tab</span></div>
+    </section>
+  </div>
+</body>
+</html>
