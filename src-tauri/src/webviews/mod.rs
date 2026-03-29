@@ -29,13 +29,24 @@ impl WebViewTabManager {
     pub fn create_page(&mut self, dest_id: &str, dest_name: &str, dest_icon: &str) -> PageInfo {
         let idx = self.next_index;
         self.next_index += 1;
+        let label = format!("page-{}", idx);
+        self.create_page_with_label(dest_id, dest_name, dest_icon, &label)
+    }
 
+    /// Create a new page with a specific label (used when reusing a recycled window)
+    pub fn create_page_with_label(
+        &mut self,
+        dest_id: &str,
+        dest_name: &str,
+        dest_icon: &str,
+        label: &str,
+    ) -> PageInfo {
         let page = PageInfo {
-            id: format!("page-{}", idx),
+            id: label.to_string(),
             dest_id: dest_id.to_string(),
             dest_name: dest_name.to_string(),
             dest_icon: dest_icon.to_string(),
-            label: format!("page-{}", idx),
+            label: label.to_string(),
         };
 
         self.pages.push(page.clone());

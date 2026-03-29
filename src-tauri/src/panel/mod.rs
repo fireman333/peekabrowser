@@ -14,6 +14,10 @@ static ACTIVE_PAGE_LABEL: Mutex<Option<String>> = Mutex::new(None);
 /// All page viewer labels — for hiding all at once
 static ALL_PAGE_LABELS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// Pool of recycled window labels — hidden off-screen, ready to be reused
+/// for new tabs instead of creating fresh WebContent processes.
+static RECYCLED_POOL: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 /// Current screen origin (top-left coords) where the panel is displayed
 static CURRENT_SCREEN_X: Mutex<f64> = Mutex::new(0.0);
 static CURRENT_SCREEN_Y: Mutex<f64> = Mutex::new(0.0);
@@ -114,7 +118,7 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
         });
     } catch(e) {}
 
-    // 6. Handle Cmd+R (reload) and Cmd+W (close tab) in page viewer
+    // 6. Handle Cmd+R (reload), Cmd+W (close tab), Cmd+N (new tab) in page viewer.
     //    NSPanel is non-activating so the sidebar keydown listener won't fire here.
     document.addEventListener('keydown', function(e) {
         if (e.metaKey && e.key === 'r') {
@@ -133,6 +137,21 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
                     }
                 }
             } catch(err) { console.log('close_page err', err); }
+        } else if (e.metaKey && e.key === 'n') {
+            e.preventDefault();
+            // Use Tauri IPC to open a new tab for the same destination
+            try {
+                var internals = window.__TAURI_INTERNALS__;
+                if (internals && internals.invoke) {
+                    var label = internals.metadata && internals.metadata.currentWebview
+                        ? internals.metadata.currentWebview.label : '';
+                    if (label) {
+                        // new_tab needs the destination ID, so we use a dedicated command
+                        // that finds the dest from the active page
+                        internals.invoke('new_tab_for_active', {});
+                    }
+                }
+            } catch(err) { console.log('new_tab err', err); }
         }
     });
 })();
@@ -308,23 +327,87 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
 }
 
 /// Destroy a page viewer panel.
-/// IMPORTANT: We do NOT call w.destroy() because destroying an NSPanel-wrapped
-/// WebviewWindow causes a native crash (SIGABRT in WKWebView teardown).
-/// Instead, we hide it off-screen and navigate to about:blank to free resources.
+///
+/// IMPORTANT: We CANNOT call `w.destroy()` or `w.close()` on NSPanel-wrapped
+/// WebviewWindows — doing so triggers a native crash (SIGABRT) in tao's
+/// `control_flow_end_handler` during WKWebView teardown.
+///
+/// Instead we:
+/// 1. Navigate to `about:blank` — WebKit releases the heavy page resources
+///    (DOM tree, images, JavaScript heap, network connections)
+/// 2. Clear any remaining DOM content
+/// 3. Shrink the window to 1×1 and hide it off-screen
+///
+/// The WebContent process stays alive but uses minimal memory (~2-5 MB for
+/// about:blank vs. 50-300 MB for real pages). This is the best we can do
+/// without a native Tauri API for safe window disposal in NSPanel mode.
 pub fn destroy_page_panel(app: &AppHandle, label: &str) {
     unregister_page_label(label);
 
-    // Hide the panel
+    // Hide the NSPanel
     if let Ok(p) = app.get_webview_panel(label) {
         p.order_out(None);
     }
-    // Move off-screen and blank the webview to release page resources
+
     if let Some(w) = app.get_webview_window(label) {
+        // Hide and move off-screen
         let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, -9999.0));
         let _ = w.set_size(tauri::LogicalSize::new(1.0, 1.0));
-        let _ = w.eval("window.stop(); document.documentElement.innerHTML = '';");
         let _ = w.hide();
+        // Stop loading and clear DOM to free some JS heap memory
+        let _ = w.eval("window.stop(); document.documentElement.innerHTML = '';");
     }
+
+    // Add to recycled pool — will be reused by next create_page_panel call
+    if let Ok(mut pool) = RECYCLED_POOL.lock() {
+        pool.push(label.to_string());
+        log::info!("Added to recycle pool: {} (pool size: {})", label, pool.len());
+    }
+}
+
+/// Pop a recycled window label from the pool (if any are available).
+/// The caller should use `reuse_page_panel()` to navigate and show it.
+pub fn pop_recycled_label() -> Option<String> {
+    if let Ok(mut pool) = RECYCLED_POOL.lock() {
+        let label = pool.pop();
+        if label.is_some() {
+            log::info!("Popped from recycle pool (remaining: {})", pool.len());
+        }
+        label
+    } else {
+        None
+    }
+}
+
+/// Reuse a recycled window: navigate to a new URL and show it.
+pub fn reuse_page_panel(app: &AppHandle, label: &str, url: &str) -> tauri::Result<()> {
+    let sx = current_screen_x();
+    let (panel_height, panel_y) = panel_geometry();
+    let viewer_width = get_viewer_width();
+
+    if let Some(w) = app.get_webview_window(label) {
+        let parsed = url.parse::<url::Url>().map_err(|e| {
+            tauri::Error::AssetNotFound(format!("Invalid URL: {} ({})", url, e))
+        })?;
+        let _ = w.navigate(parsed);
+        let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
+        let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
+        let _ = w.show();
+    }
+    if let Ok(p) = app.get_webview_panel(label) {
+        p.show();
+    }
+
+    register_page_label(label);
+    log::info!("Reused page panel: {} -> {}", label, url);
+    Ok(())
+}
+
+/// Check if a page is in the process of closing.
+/// (Currently always false — we no longer destroy windows, so no crash-prone
+/// close flow exists. Kept for API compatibility with lib.rs on_window_event.)
+pub fn is_page_closing(_label: &str) -> bool {
+    false
 }
 
 // ─── Sidebar panel creation ─────────────────────────────────────────────

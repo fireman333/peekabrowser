@@ -164,11 +164,9 @@ pub fn switch_destination(
             mgr.set_active(&page_id);
             crate::panel::show_page_viewer(&app, &label);
         } else {
-            // Create a new page
-            let page = mgr.create_page(&id, &dest.name, &dest.icon);
+            // Try to reuse a recycled window, otherwise create new
+            let page = create_or_reuse_page(&app, &mut mgr, &id, &dest)?;
             mgr.set_active(&page.id);
-            crate::panel::create_page_panel(&app, &page.label, &dest.url)
-                .map_err(|e| e.to_string())?;
             crate::panel::set_active_page_label(&page.label);
         }
 
@@ -193,7 +191,7 @@ pub fn new_tab(
 
     let page_label;
     if let Ok(mut mgr) = tab_manager.lock() {
-        let page = mgr.create_page(&id, &dest.name, &dest.icon);
+        let page = create_or_reuse_page(&app, &mut mgr, &id, &dest)?;
         page_label = page.label.clone();
         mgr.set_active(&page.id);
         emit_pages_update(&app, &mgr);
@@ -201,11 +199,47 @@ pub fn new_tab(
         return Err("Lock failed".to_string());
     }
 
-    crate::panel::create_page_panel(&app, &page_label, &dest.url)
-        .map_err(|e| e.to_string())?;
     crate::panel::set_active_page_label(&page_label);
-
     Ok(())
+}
+
+/// Helper: create a page by reusing a recycled window (if available) or creating a new one.
+fn create_or_reuse_page(
+    app: &AppHandle,
+    mgr: &mut WebViewTabManager,
+    dest_id: &str,
+    dest: &Destination,
+) -> Result<crate::webviews::PageInfo, String> {
+    if let Some(recycled_label) = crate::panel::pop_recycled_label() {
+        // Reuse the recycled window with its existing label
+        let page = mgr.create_page_with_label(dest_id, &dest.name, &dest.icon, &recycled_label);
+        crate::panel::reuse_page_panel(app, &recycled_label, &dest.url)
+            .map_err(|e| e.to_string())?;
+        Ok(page)
+    } else {
+        // Create a brand new window
+        let page = mgr.create_page(dest_id, &dest.name, &dest.icon);
+        crate::panel::create_page_panel(app, &page.label, &dest.url)
+            .map_err(|e| e.to_string())?;
+        Ok(page)
+    }
+}
+
+/// Open a new tab for the currently active destination (called from page viewer's Cmd+N).
+/// Finds the active page's destination and creates a new tab for it.
+#[tauri::command]
+pub fn new_tab_for_active(
+    app: AppHandle,
+    tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
+    dest_manager: State<DestinationManager>,
+) -> Result<(), String> {
+    let dest_id = {
+        let mgr = tab_manager.lock().map_err(|_| "Lock failed")?;
+        mgr.get_active_page()
+            .map(|p| p.dest_id.clone())
+            .ok_or_else(|| "No active page".to_string())?
+    };
+    new_tab(app, tab_manager, dest_manager, dest_id)
 }
 
 /// Send text to the active page viewer
@@ -726,10 +760,10 @@ pub fn pick_destination(
 
     crate::panel::show_panel(&app);
 
-    // Create a new page for this query
+    // Create a new page for this query (reuse recycled window if available)
     let page_label;
     if let Ok(mut mgr) = tab_manager.lock() {
-        let page = mgr.create_page(&id, &dest.name, &dest.icon);
+        let page = create_or_reuse_page(&app, &mut mgr, &id, &dest)?;
         page_label = page.label.clone();
         mgr.set_active(&page.id);
         emit_pages_update(&app, &mgr);
@@ -737,9 +771,6 @@ pub fn pick_destination(
         return Err("Lock failed".to_string());
     }
 
-    // Create the page viewer panel
-    crate::panel::create_page_panel(&app, &page_label, &dest.url)
-        .map_err(|e| e.to_string())?;
     crate::panel::set_active_page_label(&page_label);
 
     // Inject content after page loads

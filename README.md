@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_1.2.0_aarch64.dmg`
+1. 開啟 `Peekabrowser_1.3.0_aarch64.dmg`
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. 第一次開啟時，macOS 會提示「無法打開 Peekabrowser，因為它來自未識別的開發者」
 4. 前往 **系統設定 → 隱私與安全性**，找到 Peekabrowser 的提示，點擊 **「仍要打開」**
@@ -203,7 +203,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_1.2.0_aarch64.dmg`
+1. Open `Peekabrowser_1.3.0_aarch64.dmg`
 2. Drag `Peekabrowser.app` to the Applications folder
 3. On first launch, macOS will show "Peekabrowser cannot be opened because it is from an unidentified developer"
 4. Go to **System Settings → Privacy & Security**, find the Peekabrowser prompt, and click **"Open Anyway"**
@@ -389,4 +389,14 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v1.2.0 | Built with [Tauri](https://tauri.app)
+**WebView 記憶體管理 (v1.3.0)**
+
+Peekabrowser 採用 Window Pool Reuse 機制管理記憶體：關閉的分頁 WebView 會被回收並在開啟新分頁時重複利用，而非每次都建立新的 WebContent process。這讓長時間使用時記憶體消耗維持穩定，不會隨著開關分頁次數而持續增長。
+
+**WebView Memory Management (v1.3.0)**
+
+Peekabrowser uses a Window Pool Reuse mechanism to manage memory: closed tab WebViews are recycled and reused when opening new tabs, instead of creating new WebContent processes each time. This keeps memory usage stable during long sessions, preventing growth from repeated tab open/close cycles.
+
+---
+
+Peekabrowser v1.3.0 | Built with [Tauri](https://tauri.app)

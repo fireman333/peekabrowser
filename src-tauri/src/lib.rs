@@ -86,6 +86,7 @@ pub fn run() {
             commands::reorder_destinations,
             commands::switch_destination,
             commands::new_tab,
+            commands::new_tab_for_active,
             commands::send_to_active,
             commands::get_clipboard_text,
             commands::set_viewer_width,
@@ -112,8 +113,10 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let label = window.label();
-                // Allow settings window to close; prevent everything else
-                if label != "settings-window" && label != "system-config" {
+                // Allow settings/system-config windows and intentionally-closing pages
+                if label != "settings-window" && label != "system-config"
+                    && !panel::is_page_closing(label)
+                {
                     api.prevent_close();
                     // If a page viewer requested close (e.g. Cmd+W from page),
                     // perform cleanup via close_page logic
