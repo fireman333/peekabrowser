@@ -25,6 +25,8 @@ const PRESETS = [
   { name: "Gemini Gem", url: "https://gemini.google.com/gem/", icon: "" },
   { name: "Perplexity Space", url: "https://www.perplexity.ai/collections/", icon: "" },
   { name: "OpenEvidence", url: "https://www.openevidence.com", icon: "" },
+  { name: "Calendar", url: "system://calendar", icon: "📅" },
+  { name: "Reminders", url: "system://reminders", icon: "☑️" },
 ];
 
 let destinations: Destination[] = [];
@@ -64,7 +66,7 @@ async function loadDestinations() {
 function renderList() {
   listEl.innerHTML = "";
   const sorted = [...destinations].sort((a, b) => a.order - b.order);
-  sorted.forEach((d) => {
+  sorted.forEach((d, idx) => {
     const el = document.createElement("div");
     el.className = "dest-item";
     const iconHtml = d.icon && d.icon.trim()
@@ -76,9 +78,15 @@ function renderList() {
         <div class="name">${d.name}</div>
         <div class="url">${d.url}</div>
       </div>
+      <div class="reorder-btns">
+        <button class="reorder-btn up-btn" title="Move up" ${idx === 0 ? "disabled" : ""}>↑</button>
+        <button class="reorder-btn down-btn" title="Move down" ${idx === sorted.length - 1 ? "disabled" : ""}>↓</button>
+      </div>
       <button class="edit-btn" title="Edit">✎</button>
       <button class="remove-btn" title="Remove">✕</button>
     `;
+    el.querySelector(".up-btn")!.addEventListener("click", () => moveDestination(d.id, -1));
+    el.querySelector(".down-btn")!.addEventListener("click", () => moveDestination(d.id, 1));
     el.querySelector(".edit-btn")!.addEventListener("click", () => {
       startEdit(d);
     });
@@ -89,6 +97,28 @@ function renderList() {
     });
     listEl.appendChild(el);
   });
+}
+
+async function moveDestination(id: string, direction: number) {
+  const sorted = [...destinations].sort((a, b) => a.order - b.order);
+  const idx = sorted.findIndex((d) => d.id === id);
+  if (idx < 0) return;
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= sorted.length) return;
+
+  // Swap orders
+  const temp = sorted[idx].order;
+  sorted[idx].order = sorted[newIdx].order;
+  sorted[newIdx].order = temp;
+
+  // Build ordered IDs and send to backend
+  sorted.sort((a, b) => a.order - b.order);
+  const orderedIds = sorted.map((d) => d.id);
+  try {
+    await invoke("reorder_destinations", { orderedIds });
+    destinations = sorted;
+    renderList();
+  } catch (_e) {}
 }
 
 function startEdit(d: Destination) {

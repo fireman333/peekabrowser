@@ -177,7 +177,7 @@ pub const SIDEBAR_LABEL: &str = "sidebar";
 pub const PICKER_LABEL: &str = "picker";
 
 const PICKER_WIDTH: f64 = 210.0;
-const PICKER_HEIGHT: f64 = 260.0;
+const PICKER_HEIGHT: f64 = 360.0;
 
 /// Width of the tab bar (sidebar UI panel)
 pub const TAB_BAR_WIDTH: f64 = 56.0;

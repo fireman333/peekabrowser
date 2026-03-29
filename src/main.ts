@@ -86,65 +86,89 @@ async function loadPages() {
 }
 
 // ─── Tab Bar ────────────────────────────────────────────
+function isSystemDest(dest: Destination): boolean {
+  return dest.url.includes("system://");
+}
+
 function renderTabBar() {
   tabList.innerHTML = "";
   const sorted = [...destinations].sort((a, b) => a.order - b.order);
-  sorted.forEach((dest) => {
-    // Destination icon button
-    const btn = document.createElement("button");
-    btn.className = "tab-btn";
-    // Highlight if this destination has the active page
-    const destPages = pages.filter((p) => p.dest_id === dest.id);
-    const hasActivePage = destPages.some((p) => p.id === activePageId);
-    if (hasActivePage) btn.classList.add("active");
+  const regularDests = sorted.filter((d) => !isSystemDest(d));
+  const systemDests = sorted.filter((d) => isSystemDest(d));
 
-    btn.dataset.id = dest.id;
-    btn.innerHTML = `
-      ${renderIcon(dest)}
-      <span class="tab-tooltip">${dest.name}</span>
-    `;
-    btn.addEventListener("click", () => switchDestination(dest.id));
-    tabList.appendChild(btn);
+  regularDests.forEach((dest) => renderDestItem(dest));
 
-    // Page sub-tabs for this destination
-    if (destPages.length > 0) {
-      const pageGroup = document.createElement("div");
-      pageGroup.className = "page-group";
-      destPages.forEach((page, idx) => {
-        const dotWrap = document.createElement("div");
-        dotWrap.className = "page-dot-wrap";
+  if (systemDests.length > 0 && regularDests.length > 0) {
+    const sep = document.createElement("div");
+    sep.className = "system-separator";
+    tabList.appendChild(sep);
+  }
 
-        const dot = document.createElement("button");
-        dot.className = "page-dot" + (page.id === activePageId ? " active" : "");
-        dot.textContent = String(idx + 1);
-        dot.title = `${page.dest_name} #${idx + 1}`;
-        dot.addEventListener("click", (e) => {
-          e.stopPropagation();
-          switchPage(page.id);
-        });
-        // Right-click to close
-        dot.addEventListener("contextmenu", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          closePage(page.id);
-        });
+  systemDests.forEach((dest) => renderDestItem(dest));
+}
 
-        const closeBtn = document.createElement("button");
-        closeBtn.className = "page-close-btn";
-        closeBtn.textContent = "✕";
-        closeBtn.title = "Close tab";
-        closeBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          closePage(page.id);
-        });
+function renderDestItem(dest: Destination) {
+  const btn = document.createElement("button");
+  btn.className = "tab-btn";
+  const destPages = pages.filter((p) => p.dest_id === dest.id);
+  const hasActivePage = destPages.some((p) => p.id === activePageId);
+  if (hasActivePage) btn.classList.add("active");
 
-        dotWrap.appendChild(dot);
-        dotWrap.appendChild(closeBtn);
-        pageGroup.appendChild(dotWrap);
-      });
-      tabList.appendChild(pageGroup);
+  btn.dataset.id = dest.id;
+  btn.innerHTML = `
+    ${renderIcon(dest)}
+    <span class="tab-tooltip">${dest.name}</span>
+  `;
+  btn.addEventListener("click", () => {
+    if (dest.url.includes("system://calendar")) {
+      invoke("open_system_app", { appName: "Calendar" });
+      return;
     }
+    if (dest.url.includes("system://reminders")) {
+      invoke("open_system_app", { appName: "Reminders" });
+      return;
+    }
+    switchDestination(dest.id);
   });
+  tabList.appendChild(btn);
+
+  // Page sub-tabs
+  if (destPages.length > 0) {
+    const pageGroup = document.createElement("div");
+    pageGroup.className = "page-group";
+    destPages.forEach((page, idx) => {
+      const dotWrap = document.createElement("div");
+      dotWrap.className = "page-dot-wrap";
+
+      const dot = document.createElement("button");
+      dot.className = "page-dot" + (page.id === activePageId ? " active" : "");
+      dot.textContent = String(idx + 1);
+      dot.title = `${page.dest_name} #${idx + 1}`;
+      dot.addEventListener("click", (e) => {
+        e.stopPropagation();
+        switchPage(page.id);
+      });
+      dot.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closePage(page.id);
+      });
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "page-close-btn";
+      closeBtn.textContent = "✕";
+      closeBtn.title = "Close tab";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closePage(page.id);
+      });
+
+      dotWrap.appendChild(dot);
+      dotWrap.appendChild(closeBtn);
+      pageGroup.appendChild(dotWrap);
+    });
+    tabList.appendChild(pageGroup);
+  }
 }
 
 async function switchDestination(id: string) {

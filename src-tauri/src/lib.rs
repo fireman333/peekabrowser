@@ -41,6 +41,7 @@ pub fn run() {
         .manage(ShortcutStore::new(app_data_dir))
         .manage(std::sync::Mutex::new(WebViewTabManager::new()))
         .manage(PickerState(std::sync::Mutex::new(String::new())))
+        .manage(commands::SystemConfigState::new())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -77,6 +78,7 @@ pub fn run() {
             commands::toggle_sidebar,
             commands::show_sidebar,
             commands::hide_sidebar,
+            commands::open_system_app,
             commands::get_destinations,
             commands::add_destination,
             commands::update_destination,
@@ -98,6 +100,10 @@ pub fn run() {
             commands::reload_active_page,
             commands::get_shortcuts,
             commands::save_shortcuts,
+            commands::get_system_config_data,
+            commands::create_system_item,
+            commands::close_system_config,
+            commands::run_ocr,
         ])
         // Prevent page panel window close from exiting the app.
         // Settings window is allowed to close normally.
@@ -105,7 +111,7 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let label = window.label();
                 // Allow settings window to close; prevent everything else
-                if label != "settings-window" {
+                if label != "settings-window" && label != "system-config" {
                     api.prevent_close();
                     // If a page viewer requested close (e.g. Cmd+W from page),
                     // perform cleanup via close_page logic

@@ -28,6 +28,7 @@ export default defineConfig(async () => ({
         main: resolve(__dirname, "index.html"),
         picker: resolve(__dirname, "picker.html"),
         settings: resolve(__dirname, "settings.html"),
+        systemConfig: resolve(__dirname, "system-config.html"),
       },
     },
   },

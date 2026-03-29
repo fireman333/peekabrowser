@@ -1,6 +1,6 @@
 [package]
 name = "peekabrowser"
-version = "1.0.0"
+version = "1.1.0"
 description = "Peekabrowser - macOS Sidebar Browser"
 authors = ["you"]
 edition = "2021"

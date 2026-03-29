@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quick Create</title>
+  <link rel="stylesheet" href="/src/system-config.css" />
+  <script type="module" src="/src/system-config.ts" defer></script>
+</head>
+<body>
+  <div id="config-app">
+    <h1 id="config-title">New Event</h1>
+
+    <div class="form-group">
+      <label for="config-text">Title</label>
+      <input id="config-text" type="text" placeholder="Event title..." />
+    </div>
+
+    <div class="form-group">
+      <label for="config-list">Calendar</label>
+      <select id="config-list"></select>
+    </div>
+
+    <div class="form-group" id="start-group">
+      <label for="config-start">Start</label>
+      <input id="config-start" type="datetime-local" />
+    </div>
+
+    <div class="form-group" id="end-group">
+      <label for="config-end">End</label>
+      <input id="config-end" type="datetime-local" />
+    </div>
+
+    <div class="form-actions">
+      <button id="create-btn" class="btn-primary">Create</button>
+      <button id="cancel-btn" class="btn-secondary">Cancel</button>
+    </div>
+  </div>
+</body>
+</html>

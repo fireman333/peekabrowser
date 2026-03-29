@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for Airy sidebar",
-  "windows": ["main", "sidebar", "overlay", "settings-window", "page-*", "picker"],
+  "windows": ["main", "sidebar", "overlay", "settings-window", "system-config", "page-*", "picker"],
   "permissions": [
     "core:default",
     "core:window:allow-create",

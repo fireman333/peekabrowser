@@ -1,8 +1,26 @@
 use serde::Serialize;
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::destinations::{Destination, DestinationManager};
 use crate::webviews::{PageInfo, WebViewTabManager};
+
+/// State for the system config window (Calendar/Reminders)
+pub struct SystemConfigState {
+    pub item_type: Mutex<String>,  // "calendar" or "reminders"
+    pub text: Mutex<String>,
+    pub needs_ocr: Mutex<bool>,    // true if text should come from OCR
+}
+
+impl SystemConfigState {
+    pub fn new() -> Self {
+        Self {
+            item_type: Mutex::new(String::new()),
+            text: Mutex::new(String::new()),
+            needs_ocr: Mutex::new(false),
+        }
+    }
+}
 
 #[tauri::command]
 pub fn toggle_sidebar(app: AppHandle) {
@@ -20,6 +38,16 @@ pub fn hide_sidebar(app: AppHandle) {
 }
 
 #[tauri::command]
+pub fn open_system_app(app_name: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg("-a")
+        .arg(&app_name)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_destinations(dest_manager: State<DestinationManager>) -> Vec<Destination> {
     dest_manager.get_all()
 }
@@ -32,8 +60,10 @@ pub fn add_destination(
     url: String,
     icon: String,
 ) -> Result<Destination, String> {
-    // Validate URL
-    let validated_url = if !url.starts_with("http://") && !url.starts_with("https://") {
+    // Validate URL (skip system:// internal URLs)
+    let validated_url = if url.starts_with("system://") {
+        url
+    } else if !url.starts_with("http://") && !url.starts_with("https://") {
         format!("https://{}", url)
     } else {
         url
@@ -103,10 +133,14 @@ pub fn remove_destination(
 
 #[tauri::command]
 pub fn reorder_destinations(
+    app: AppHandle,
     dest_manager: State<DestinationManager>,
     ordered_ids: Vec<String>,
 ) {
     dest_manager.reorder(ordered_ids);
+    if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
+        let _ = sidebar.emit("destinations-changed", ());
+    }
 }
 
 /// Switch to a destination (clicked in sidebar).
@@ -260,6 +294,369 @@ pub fn get_picker_data(
     }
 }
 
+/// Handle system:// destinations — store state and open config window
+fn handle_system_destination(app: &AppHandle, url: &str, text: &str) -> Result<(), String> {
+    let item_type = if url.contains("calendar") {
+        "calendar"
+    } else if url.contains("reminders") {
+        "reminders"
+    } else {
+        return Err(format!("Unknown system destination: {}", url));
+    };
+
+    // Store config state for the window to read
+    if let Some(state) = app.try_state::<SystemConfigState>() {
+        *state.item_type.lock().unwrap() = item_type.to_string();
+        *state.text.lock().unwrap() = text.to_string();
+    }
+
+    // Open the config window
+    open_system_config_window_inner(app);
+    Ok(())
+}
+
+fn open_system_config_window_inner(app: &AppHandle) {
+    use tauri::WebviewWindowBuilder;
+    let label = "system-config";
+    if let Some(w) = app.get_webview_window(label) {
+        let _ = w.set_focus();
+        return;
+    }
+
+    let (screen_w, screen_h) = crate::panel::get_primary_screen_size();
+    let win_w = 420.0_f64;
+    let win_h = 380.0_f64;
+    let x = (screen_w - win_w) / 2.0;
+    let y = (screen_h - win_h) / 2.0;
+
+    let _ = WebviewWindowBuilder::new(
+        app,
+        label,
+        tauri::WebviewUrl::App("system-config.html".into()),
+    )
+    .title("Quick Create")
+    .inner_size(win_w, win_h)
+    .position(x, y)
+    .resizable(false)
+    .decorations(true)
+    .always_on_top(true)
+    .visible(true)
+    .build();
+}
+
+#[derive(Serialize)]
+pub struct SystemConfigData {
+    item_type: String,
+    text: String,
+    lists: Vec<String>,
+    needs_ocr: bool,
+}
+
+#[tauri::command]
+pub fn get_system_config_data(
+    config_state: State<SystemConfigState>,
+) -> Result<SystemConfigData, String> {
+    let item_type = config_state.item_type.lock().unwrap().clone();
+    let text = config_state.text.lock().unwrap().clone();
+
+    // Query available lists via AppleScript (launches app if needed)
+    let lists = if item_type == "calendar" {
+        query_applescript_list(
+            "Calendar",
+            r#"tell application "Calendar" to name of every calendar whose writable is true"#,
+        )
+    } else {
+        query_applescript_list(
+            "Reminders",
+            r#"tell application "Reminders" to name of every list"#,
+        )
+    };
+
+    let needs_ocr = config_state.needs_ocr.lock().unwrap().clone();
+
+    Ok(SystemConfigData {
+        item_type,
+        text,
+        lists,
+        needs_ocr,
+    })
+}
+
+fn query_applescript_list(app_name: &str, script: &str) -> Vec<String> {
+    // Ensure the app is running first (required for AppleScript queries)
+    let _ = std::process::Command::new("open")
+        .args(["-gj", "-a", app_name]) // -g: don't bring to front, -j: launch hidden
+        .output();
+    // Small delay for the app to initialize
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    match std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            raw.trim()
+                .split(", ")
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        }
+        Ok(out) => {
+            log::warn!("AppleScript list query failed: {}", String::from_utf8_lossy(&out.stderr));
+            vec![]
+        }
+        Err(e) => {
+            log::error!("osascript exec failed: {}", e);
+            vec![]
+        }
+    }
+}
+
+#[tauri::command]
+pub fn create_system_item(
+    app: AppHandle,
+    item_type: String,
+    text: String,
+    list_name: String,
+    start_time: Option<String>,
+    end_time: Option<String>,
+) -> Result<(), String> {
+    let text_escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+    let list_escaped = list_name.replace('\\', "\\\\").replace('"', "\\\"");
+
+    let script = if item_type == "calendar" {
+        // Build date setting AppleScript
+        let date_script = if let Some(ref start) = start_time {
+            let end = end_time.as_deref().unwrap_or(start);
+            format!(
+                r#"set startDate to my parseDate("{}")
+        set endDate to my parseDate("{}")"#,
+                start, end
+            )
+        } else {
+            "set startDate to (current date)\n        set endDate to startDate + 3600".to_string()
+        };
+
+        format!(
+            r#"on parseDate(dateStr)
+    -- dateStr format: "2026-03-29T14:30"
+    set oldDelims to AppleScript's text item delimiters
+    set AppleScript's text item delimiters to {{"T", "-", ":"}}
+    set parts to text items of dateStr
+    set AppleScript's text item delimiters to oldDelims
+    set d to current date
+    set year of d to (item 1 of parts) as integer
+    set month of d to (item 2 of parts) as integer
+    set day of d to (item 3 of parts) as integer
+    set hours of d to (item 4 of parts) as integer
+    set minutes of d to (item 5 of parts) as integer
+    set seconds of d to 0
+    return d
+end parseDate
+
+tell application "Calendar"
+    tell calendar "{}"
+        {}
+        make new event at end with properties {{summary:"{}", start date:startDate, end date:endDate}}
+    end tell
+end tell"#,
+            list_escaped, date_script, text_escaped
+        )
+    } else {
+        // Reminders
+        let due_part = if let Some(ref start) = start_time {
+            if !start.is_empty() {
+                format!(
+                    r#", due date:my parseDate("{}")"#,
+                    start
+                )
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        if due_part.is_empty() {
+            format!(
+                r#"tell application "Reminders"
+    tell list "{}"
+        make new reminder with properties {{name:"{}"}}
+    end tell
+end tell"#,
+                list_escaped, text_escaped
+            )
+        } else {
+            format!(
+                r#"on parseDate(dateStr)
+    set oldDelims to AppleScript's text item delimiters
+    set AppleScript's text item delimiters to {{"T", "-", ":"}}
+    set parts to text items of dateStr
+    set AppleScript's text item delimiters to oldDelims
+    set d to current date
+    set year of d to (item 1 of parts) as integer
+    set month of d to (item 2 of parts) as integer
+    set day of d to (item 3 of parts) as integer
+    set hours of d to (item 4 of parts) as integer
+    set minutes of d to (item 5 of parts) as integer
+    set seconds of d to 0
+    return d
+end parseDate
+
+tell application "Reminders"
+    tell list "{}"
+        make new reminder with properties {{name:"{}"{}}}
+    end tell
+end tell"#,
+                list_escaped, text_escaped, due_part
+            )
+        }
+    };
+
+    let is_calendar = item_type == "calendar";
+    std::thread::spawn(move || {
+        // Ensure the target app is running
+        let app_name = if is_calendar { "Calendar" } else { "Reminders" };
+        let _ = std::process::Command::new("open")
+            .args(["-gj", "-a", app_name])
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {
+                let kind = if is_calendar { "行事曆事件" } else { "提醒事項" };
+                let notif = format!(
+                    r#"display notification "已建立{}" with title "Peekabrowser""#,
+                    kind
+                );
+                let _ = std::process::Command::new("osascript")
+                    .arg("-e")
+                    .arg(&notif)
+                    .output();
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                eprintln!("AppleScript error: {}", err);
+            }
+            Err(e) => {
+                eprintln!("Failed to run osascript: {}", e);
+            }
+        }
+    });
+
+    // Close config window
+    if let Some(w) = app.get_webview_window("system-config") {
+        let _ = w.close();
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_system_config(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("system-config") {
+        let _ = w.close();
+    }
+}
+
+/// Public command: run OCR on the last screenshot and return extracted text.
+/// Called asynchronously by the system-config window frontend.
+#[tauri::command]
+pub fn run_ocr(app: AppHandle) -> Result<String, String> {
+    ocr_screenshot(&app)
+}
+
+/// Run OCR on the screenshot using the bundled ocr-helper binary.
+/// If the bundled binary can't be found or executed, compiles from
+/// embedded Swift source as a fallback (cached for subsequent calls).
+fn ocr_screenshot(_app: &AppHandle) -> Result<String, String> {
+    let screenshot_path = "/tmp/peekabrowser_screenshot.png";
+    if !std::path::Path::new(screenshot_path).exists() {
+        log::error!("OCR: screenshot file not found");
+        return Err("Screenshot file not found".to_string());
+    }
+
+    // Try to find and use the bundled binary first
+    let bundled_binary = std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.parent()
+                .and_then(|macos| macos.parent())
+                .map(|contents| contents.join("Resources/assets/ocr-helper"))
+        })
+        .filter(|p| p.exists());
+
+    if let Some(ref binary_path) = bundled_binary {
+        log::info!("OCR: trying bundled binary at {:?}", binary_path);
+        // Clear quarantine attribute if present
+        let _ = std::process::Command::new("xattr")
+            .args(["-d", "com.apple.quarantine"])
+            .arg(binary_path)
+            .output();
+
+        let output = std::process::Command::new(binary_path)
+            .arg(screenshot_path)
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                log::info!("OCR: bundled binary success, {} chars", text.len());
+                return Ok(text);
+            }
+            Ok(out) => {
+                log::warn!("OCR: bundled binary failed: {}", String::from_utf8_lossy(&out.stderr));
+            }
+            Err(e) => {
+                log::warn!("OCR: bundled binary exec error: {}", e);
+            }
+        }
+    }
+
+    // Fallback: compile from source and cache the binary
+    let cached_binary = "/tmp/peekabrowser_ocr_helper";
+    if !std::path::Path::new(cached_binary).exists() {
+        log::info!("OCR: compiling Swift helper from source...");
+        let swift_src = include_str!("../ocr-helper/main.swift");
+        let src_path = "/tmp/peekabrowser_ocr.swift";
+        std::fs::write(src_path, swift_src)
+            .map_err(|e| format!("Write OCR source failed: {}", e))?;
+
+        let compile = std::process::Command::new("swiftc")
+            .args(["-O", src_path, "-o", cached_binary])
+            .output()
+            .map_err(|e| format!("swiftc failed: {}", e))?;
+
+        if !compile.status.success() {
+            let err = String::from_utf8_lossy(&compile.stderr);
+            log::error!("OCR: compile failed: {}", err);
+            return Err(format!("OCR compile failed: {}", err));
+        }
+        log::info!("OCR: compiled successfully to {}", cached_binary);
+    }
+
+    let output = std::process::Command::new(cached_binary)
+        .arg(screenshot_path)
+        .output()
+        .map_err(|e| format!("OCR exec failed: {}", e))?;
+
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        log::info!("OCR: extracted {} chars", text.len());
+        Ok(text)
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        log::error!("OCR: process failed: {}", err);
+        Err(format!("OCR failed: {}", err))
+    }
+}
+
 /// User picked a destination in the picker popup — always creates a NEW page
 #[tauri::command]
 pub fn pick_destination(
@@ -270,11 +667,35 @@ pub fn pick_destination(
     text: String,
 ) -> Result<(), String> {
     crate::panel::hide_picker(&app);
-    crate::panel::show_panel(&app);
 
     let dest = dest_manager
         .get_by_id(&id)
         .ok_or_else(|| format!("Destination '{}' not found", id))?;
+
+    // Handle system:// destinations (Calendar, Reminders) via AppleScript
+    // Also handle "https://system://" which can happen if URL was auto-prefixed
+    let system_url = if dest.url.starts_with("system://") {
+        Some(dest.url.clone())
+    } else if dest.url.starts_with("https://system://") {
+        Some(dest.url.replace("https://system://", "system://"))
+    } else {
+        None
+    };
+    if let Some(sys_url) = system_url {
+        let is_screenshot = text.starts_with("__screenshot__:");
+        let actual_text = if is_screenshot {
+            String::new() // OCR will be done async by the config window
+        } else {
+            text.clone()
+        };
+        // Set needs_ocr flag so the config window knows to run OCR
+        if let Some(state) = app.try_state::<SystemConfigState>() {
+            *state.needs_ocr.lock().unwrap() = is_screenshot;
+        }
+        return handle_system_destination(&app, &sys_url, &actual_text);
+    }
+
+    crate::panel::show_panel(&app);
 
     // Create a new page for this query
     let page_label;
@@ -577,7 +998,7 @@ pub fn take_screenshot(app: AppHandle) {
                     if let Some(state) = app.try_state::<crate::PickerState>() {
                         *state.0.lock().unwrap() = format!("__screenshot__:{}", data_url);
                     }
-                    let _ = std::fs::remove_file(tmp_path);
+                    // Keep screenshot file for potential OCR use by system destinations
                     log::info!("Screenshot captured, showing picker");
                 }
                 // Wake up the Accessory app, then show picker on main thread

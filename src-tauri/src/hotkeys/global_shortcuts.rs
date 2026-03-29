@@ -82,7 +82,7 @@ fn do_screenshot(app: &AppHandle) {
                     if let Some(state) = app2.try_state::<crate::PickerState>() {
                         *state.0.lock().unwrap() = format!("__screenshot__:{}", data_url);
                     }
-                    let _ = std::fs::remove_file(tmp_path);
+                    // Keep screenshot file for potential OCR use by system destinations
                     log::info!("Screenshot captured, showing picker");
                 }
 

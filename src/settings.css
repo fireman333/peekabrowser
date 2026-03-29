@@ -80,6 +80,35 @@ section {
   white-space: nowrap;
 }
 
+.reorder-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.reorder-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.reorder-btn:hover:not(:disabled) {
+  background: rgba(74, 158, 255, 0.15);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.reorder-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
 .dest-item .edit-btn,
 .dest-item .remove-btn {
   background: none;

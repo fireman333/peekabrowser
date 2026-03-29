@@ -44,5 +44,19 @@ pub fn default_destinations() -> Vec<Destination> {
             icon: "".to_string(),
             order: 5,
         },
+        Destination {
+            id: "system-calendar".to_string(),
+            name: "Calendar".to_string(),
+            url: "system://calendar".to_string(),
+            icon: "📅".to_string(),
+            order: 10,
+        },
+        Destination {
+            id: "system-reminders".to_string(),
+            name: "Reminders".to_string(),
+            url: "system://reminders".to_string(),
+            icon: "☑️".to_string(),
+            order: 11,
+        },
     ]
 }
