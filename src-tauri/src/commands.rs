@@ -179,6 +179,35 @@ pub fn switch_destination(
     Ok(())
 }
 
+/// Open a new tab for the given destination (always creates a new page).
+#[tauri::command]
+pub fn new_tab(
+    app: AppHandle,
+    tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
+    dest_manager: State<DestinationManager>,
+    id: String,
+) -> Result<(), String> {
+    let dest = dest_manager
+        .get_by_id(&id)
+        .ok_or_else(|| format!("Destination '{}' not found", id))?;
+
+    let page_label;
+    if let Ok(mut mgr) = tab_manager.lock() {
+        let page = mgr.create_page(&id, &dest.name, &dest.icon);
+        page_label = page.label.clone();
+        mgr.set_active(&page.id);
+        emit_pages_update(&app, &mgr);
+    } else {
+        return Err("Lock failed".to_string());
+    }
+
+    crate::panel::create_page_panel(&app, &page_label, &dest.url)
+        .map_err(|e| e.to_string())?;
+    crate::panel::set_active_page_label(&page_label);
+
+    Ok(())
+}
+
 /// Send text to the active page viewer
 #[tauri::command]
 pub fn send_to_active(
@@ -1037,6 +1066,21 @@ pub fn reload_active_page(app: AppHandle) {
             let _ = viewer.eval("location.reload()");
         }
     }
+}
+
+/// Open the active page's current URL in the default browser
+#[tauri::command]
+pub fn open_active_in_browser(app: AppHandle) -> Result<(), String> {
+    let label = crate::panel::get_active_page_label()
+        .ok_or("No active page")?;
+    let viewer = app.get_webview_window(&label)
+        .ok_or("Page viewer not found")?;
+    let url = viewer.url().map_err(|e| e.to_string())?;
+    std::process::Command::new("open")
+        .arg(url.as_str())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ─── Shortcut commands ──────────────────────────────────────────────────────

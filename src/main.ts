@@ -130,6 +130,7 @@ function renderDestItem(dest: Destination) {
     }
     switchDestination(dest.id);
   });
+
   tabList.appendChild(btn);
 
   // Page sub-tabs
@@ -194,6 +195,17 @@ function setupEventListeners() {
   settingsBtn.addEventListener("click", async () => {
     try { await invoke("open_settings_window"); } catch (_e) {}
   });
+  // New tab button
+  document.getElementById("new-tab-btn")?.addEventListener("click", async () => {
+    const activePage = pages.find((p) => p.id === activePageId);
+    if (activePage) {
+      try { await invoke("new_tab", { id: activePage.dest_id }); } catch (_e) {}
+    }
+  });
+  // Open in default browser button
+  document.getElementById("open-browser-btn")?.addEventListener("click", async () => {
+    try { await invoke("open_active_in_browser"); } catch (_e) {}
+  });
   // Reload button
   const reloadBtn = document.getElementById("reload-btn");
   if (reloadBtn) {
@@ -210,6 +222,13 @@ function setupEventListeners() {
       e.preventDefault();
       if (activePageId) {
         try { await invoke("close_page", { pageId: activePageId }); } catch (_e) {}
+      }
+    } else if (e.metaKey && e.key === "n") {
+      e.preventDefault();
+      // Open a new tab for the active destination
+      const activePage = pages.find((p) => p.id === activePageId);
+      if (activePage) {
+        try { await invoke("new_tab", { id: activePage.dest_id }); } catch (_e) {}
       }
     }
   });
