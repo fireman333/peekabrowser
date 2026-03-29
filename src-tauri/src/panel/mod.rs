@@ -18,6 +18,9 @@ static ALL_PAGE_LABELS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// for new tabs instead of creating fresh WebContent processes.
 static RECYCLED_POOL: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// Max recycled windows to keep. Excess are abandoned on about:blank (~2-5MB each).
+const MAX_RECYCLED_POOL_SIZE: usize = 3;
+
 /// Current screen origin (top-left coords) where the panel is displayed
 static CURRENT_SCREEN_X: Mutex<f64> = Mutex::new(0.0);
 static CURRENT_SCREEN_Y: Mutex<f64> = Mutex::new(0.0);
@@ -118,7 +121,24 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
         });
     } catch(e) {}
 
-    // 6. Handle Cmd+R (reload), Cmd+W (close tab), Cmd+N (new tab) in page viewer.
+    // 6. Track blob URLs so we can revoke them when the tab is recycled
+    try {
+        window.__blobUrls = [];
+        var _origCreateObjectURL = URL.createObjectURL;
+        URL.createObjectURL = function(obj) {
+            var url = _origCreateObjectURL.call(URL, obj);
+            window.__blobUrls.push(url);
+            return url;
+        };
+        var _origRevokeObjectURL = URL.revokeObjectURL;
+        URL.revokeObjectURL = function(url) {
+            var idx = window.__blobUrls.indexOf(url);
+            if (idx > -1) window.__blobUrls.splice(idx, 1);
+            return _origRevokeObjectURL.call(URL, url);
+        };
+    } catch(e) {}
+
+    // 7. Handle Cmd+R (reload), Cmd+W (close tab), Cmd+N (new tab) in page viewer.
     //    NSPanel is non-activating so the sidebar keydown listener won't fire here.
     document.addEventListener('keydown', function(e) {
         if (e.metaKey && e.key === 'r') {
@@ -154,6 +174,140 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
             } catch(err) { console.log('new_tab err', err); }
         }
     });
+})();
+"#;
+
+/// Aggressive cleanup script — runs before navigating a recycled window to about:blank.
+/// Releases media buffers, blob URLs, timers, canvases, service workers, caches.
+const CLEANUP_SCRIPT: &str = r#"
+(function() {
+    try { window.stop(); } catch(e) {}
+    // Pause and unload all media (decoded frames are huge)
+    try {
+        document.querySelectorAll('video, audio').forEach(function(el) {
+            el.pause(); el.removeAttribute('src'); el.load();
+        });
+    } catch(e) {}
+    // Revoke tracked blob URLs
+    try {
+        if (window.__blobUrls) {
+            window.__blobUrls.forEach(function(u) { URL.revokeObjectURL(u); });
+        }
+    } catch(e) {}
+    // Clear all timers
+    try {
+        var maxId = setTimeout(function(){}, 0);
+        for (var i = 0; i <= maxId; i++) { clearTimeout(i); clearInterval(i); }
+    } catch(e) {}
+    // Clear canvas GPU buffers
+    try {
+        document.querySelectorAll('canvas').forEach(function(c) { c.width = 0; c.height = 0; });
+    } catch(e) {}
+    // Unregister service workers
+    try {
+        if (navigator.serviceWorker) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+                regs.forEach(function(r) { r.unregister(); });
+            });
+        }
+    } catch(e) {}
+    // Clear Cache API
+    try {
+        if (window.caches) {
+            caches.keys().then(function(names) {
+                names.forEach(function(n) { caches.delete(n); });
+            });
+        }
+    } catch(e) {}
+    // Nuke DOM
+    try { document.documentElement.innerHTML = ''; } catch(e) {}
+})();
+"#;
+
+/// Freeze a background tab: pause media, stop timers/rAF, fake visibilityState=hidden.
+const FREEZE_BACKGROUND_SCRIPT: &str = r#"
+(function() {
+    if (window.__peeka_frozen) return;
+    window.__peeka_frozen = true;
+    // Pause media
+    try {
+        document.querySelectorAll('video, audio').forEach(function(el) {
+            if (!el.paused) { el.__peeka_was_playing = true; el.pause(); }
+        });
+    } catch(e) {}
+    // Suspend rAF
+    try {
+        window.__peeka_origRAF = window.requestAnimationFrame;
+        window.requestAnimationFrame = function() { return 0; };
+    } catch(e) {}
+    // Kill timers and neuter timer functions
+    try {
+        window.__peeka_origSetInterval = window.setInterval;
+        window.__peeka_origSetTimeout = window.setTimeout;
+        window.__peeka_origClearInterval = window.clearInterval;
+        window.__peeka_origClearTimeout = window.clearTimeout;
+        var maxId = window.__peeka_origSetTimeout.call(window, function(){}, 0);
+        for (var i = 0; i <= maxId; i++) {
+            window.__peeka_origClearInterval.call(window, i);
+            window.__peeka_origClearTimeout.call(window, i);
+        }
+        window.setInterval = function() { return -1; };
+        window.setTimeout = function() { return -1; };
+    } catch(e) {}
+    // Fake visibility hidden
+    try {
+        Object.defineProperty(document, 'visibilityState', {
+            get: function() { return 'hidden'; }, configurable: true
+        });
+        Object.defineProperty(document, 'hidden', {
+            get: function() { return true; }, configurable: true
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+    } catch(e) {}
+})();
+"#;
+
+/// Thaw a frozen tab: restore timers, media, animations, visibility.
+const THAW_FOREGROUND_SCRIPT: &str = r#"
+(function() {
+    if (!window.__peeka_frozen) return;
+    window.__peeka_frozen = false;
+    // Restore rAF
+    try {
+        if (window.__peeka_origRAF) {
+            window.requestAnimationFrame = window.__peeka_origRAF;
+            delete window.__peeka_origRAF;
+        }
+    } catch(e) {}
+    // Restore timer functions
+    try {
+        if (window.__peeka_origSetInterval) {
+            window.setInterval = window.__peeka_origSetInterval;
+            window.setTimeout = window.__peeka_origSetTimeout;
+            window.clearInterval = window.__peeka_origClearInterval;
+            window.clearTimeout = window.__peeka_origClearTimeout;
+            delete window.__peeka_origSetInterval;
+            delete window.__peeka_origSetTimeout;
+            delete window.__peeka_origClearInterval;
+            delete window.__peeka_origClearTimeout;
+        }
+    } catch(e) {}
+    // Resume media
+    try {
+        document.querySelectorAll('video, audio').forEach(function(el) {
+            if (el.__peeka_was_playing) { el.play().catch(function(){}); delete el.__peeka_was_playing; }
+        });
+    } catch(e) {}
+    // Restore visibility
+    try {
+        Object.defineProperty(document, 'visibilityState', {
+            get: function() { return 'visible'; }, configurable: true
+        });
+        Object.defineProperty(document, 'hidden', {
+            get: function() { return false; }, configurable: true
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+    } catch(e) {}
 })();
 "#;
 
@@ -299,7 +453,7 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
 
-    // Hide all other page viewers
+    // Hide and FREEZE all other page viewers (stops JS, media, timers)
     if let Ok(guard) = ALL_PAGE_LABELS.lock() {
         for other in guard.iter() {
             if other != label {
@@ -308,16 +462,18 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
                 }
                 if let Some(w) = app.get_webview_window(other) {
                     let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
+                    let _ = w.eval(FREEZE_BACKGROUND_SCRIPT);
                 }
             }
         }
     }
 
-    // Show the target page viewer
+    // Show and THAW the target page viewer
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
         let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
         let _ = w.show();
+        let _ = w.eval(THAW_FOREGROUND_SCRIPT);
     }
     if let Ok(p) = app.get_webview_panel(label) {
         p.show();
@@ -349,19 +505,41 @@ pub fn destroy_page_panel(app: &AppHandle, label: &str) {
         p.order_out(None);
     }
 
+    // Check if we should add to pool BEFORE doing window operations
+    let add_to_pool = if let Ok(mut pool) = RECYCLED_POOL.lock() {
+        if pool.len() < MAX_RECYCLED_POOL_SIZE {
+            pool.push(label.to_string());
+            log::info!("Added to recycle pool: {} (pool size: {})", label, pool.len());
+            true
+        } else {
+            log::info!("Recycle pool full ({}), discarding: {}", pool.len(), label);
+            false
+        }
+    } else {
+        false
+    };
+
     if let Some(w) = app.get_webview_window(label) {
         // Hide and move off-screen
         let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, -9999.0));
         let _ = w.set_size(tauri::LogicalSize::new(1.0, 1.0));
         let _ = w.hide();
-        // Stop loading and clear DOM to free some JS heap memory
-        let _ = w.eval("window.stop(); document.documentElement.innerHTML = '';");
-    }
 
-    // Add to recycled pool — will be reused by next create_page_panel call
-    if let Ok(mut pool) = RECYCLED_POOL.lock() {
-        pool.push(label.to_string());
-        log::info!("Added to recycle pool: {} (pool size: {})", label, pool.len());
+        // Run aggressive JS cleanup (release media, blobs, timers, caches, DOM)
+        let _ = w.eval(CLEANUP_SCRIPT);
+
+        if !add_to_pool {
+            // Excess window (not in pool): navigate to about:blank to fully release
+            // page context. No race condition since it won't be reused.
+            if let Ok(url) = "about:blank".parse::<url::Url>() {
+                let _ = w.navigate(url);
+            }
+        }
+        // Pool windows: DON'T navigate to about:blank.
+        // The JS cleanup already cleared DOM/media/timers.
+        // When reused, navigate() to new URL replaces everything.
+        // This avoids the race condition where delayed about:blank
+        // would overwrite a reuse navigation.
     }
 }
 
@@ -370,8 +548,10 @@ pub fn destroy_page_panel(app: &AppHandle, label: &str) {
 pub fn pop_recycled_label() -> Option<String> {
     if let Ok(mut pool) = RECYCLED_POOL.lock() {
         let label = pool.pop();
-        if label.is_some() {
-            log::info!("Popped from recycle pool (remaining: {})", pool.len());
+        if let Some(ref l) = label {
+            log::info!("Popped from recycle pool: {} (remaining: {})", l, pool.len());
+        } else {
+            log::info!("Pool empty, will create new window");
         }
         label
     } else {
@@ -389,10 +569,13 @@ pub fn reuse_page_panel(app: &AppHandle, label: &str, url: &str) -> tauri::Resul
         let parsed = url.parse::<url::Url>().map_err(|e| {
             tauri::Error::AssetNotFound(format!("Invalid URL: {} ({})", url, e))
         })?;
+        log::info!("Reusing window '{}' -> {}", label, url);
         let _ = w.navigate(parsed);
         let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
         let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
         let _ = w.show();
+    } else {
+        log::warn!("Window '{}' NOT FOUND — reuse failed!", label);
     }
     if let Ok(p) = app.get_webview_panel(label) {
         p.show();
@@ -592,12 +775,13 @@ pub fn show_panel(app: &AppHandle) {
         p.show();
     }
 
-    // Show active page viewer (if any)
+    // Show active page viewer (if any) and thaw it
     if let Some(label) = get_active_page_label() {
         if let Some(w) = app.get_webview_window(&label) {
             let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
             let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
             let _ = w.show();
+            let _ = w.eval(THAW_FOREGROUND_SCRIPT);
         }
         if let Ok(p) = app.get_webview_panel(&label) {
             p.show();
@@ -605,7 +789,7 @@ pub fn show_panel(app: &AppHandle) {
     }
 }
 
-/// Hide sidebar + all page viewers
+/// Hide sidebar + all page viewers, freezing all tabs to save memory/CPU
 pub fn hide_panel(app: &AppHandle) {
     // Hide sidebar
     if let Ok(p) = app.get_webview_panel(SIDEBAR_LABEL) {
@@ -615,7 +799,7 @@ pub fn hide_panel(app: &AppHandle) {
         let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
     }
 
-    // Hide all page viewers
+    // Hide and FREEZE all page viewers (stops all JS execution, media, timers)
     if let Ok(guard) = ALL_PAGE_LABELS.lock() {
         for label in guard.iter() {
             if let Ok(p) = app.get_webview_panel(label) {
@@ -623,6 +807,7 @@ pub fn hide_panel(app: &AppHandle) {
             }
             if let Some(w) = app.get_webview_window(label) {
                 let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
+                let _ = w.eval(FREEZE_BACKGROUND_SCRIPT);
             }
         }
     }
