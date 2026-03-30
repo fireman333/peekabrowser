@@ -12,11 +12,13 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 1. 開啟 `Peekabrowser_1.4.0_aarch64.dmg`
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
-3. 第一次開啟時，macOS 會提示「無法打開 Peekabrowser，因為它來自未識別的開發者」
-4. 前往 **系統設定 → 隱私與安全性**，找到 Peekabrowser 的提示，點擊 **「仍要打開」**
-5. 再次開啟 Peekabrowser，點擊 **「打開」** 確認
+3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
+   ```bash
+   xattr -cr /Applications/Peekabrowser.app
+   ```
+4. 雙擊開啟 Peekabrowser，如果 macOS 提示「來自未識別的開發者」，前往 **系統設定 → 隱私與安全性**，點擊 **「仍要打開」**
 
-> **注意：** Peekabrowser 目前沒有 Apple 開發者簽名，所以需要手動允許。這不會影響功能或安全性。
+> **注意：** Peekabrowser 目前沒有 Apple 開發者簽名。從網路下載的 app 會被 macOS 加上隔離標記，可能顯示「已損毀」的錯誤訊息。執行步驟 3 的指令即可解決。這不會影響功能或安全性。
 
 ### 系統需求
 
@@ -205,11 +207,13 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 1. Open `Peekabrowser_1.4.0_aarch64.dmg`
 2. Drag `Peekabrowser.app` to the Applications folder
-3. On first launch, macOS will show "Peekabrowser cannot be opened because it is from an unidentified developer"
-4. Go to **System Settings → Privacy & Security**, find the Peekabrowser prompt, and click **"Open Anyway"**
-5. Re-open Peekabrowser and click **"Open"** to confirm
+3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
+   ```bash
+   xattr -cr /Applications/Peekabrowser.app
+   ```
+4. Double-click to open Peekabrowser. If macOS shows "from an unidentified developer", go to **System Settings → Privacy & Security** and click **"Open Anyway"**
 
-> **Note:** Peekabrowser is not signed with an Apple Developer certificate, so this manual step is required. It does not affect functionality or security.
+> **Note:** Peekabrowser is not signed with an Apple Developer certificate. Apps downloaded from the internet are flagged by macOS and may show an "app is damaged" error. Running the command in step 3 fixes this. It does not affect functionality or security.
 
 ### Requirements
 
