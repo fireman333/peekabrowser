@@ -27,6 +27,13 @@ static CURRENT_SCREEN_Y: Mutex<f64> = Mutex::new(0.0);
 static CURRENT_SCREEN_W: Mutex<f64> = Mutex::new(1440.0);
 static CURRENT_SCREEN_H: Mutex<f64> = Mutex::new(900.0);
 
+/// Actual panel bounds (set in show_panel_inner, read by hover_detector)
+/// These represent the real position where the panel was placed.
+static PANEL_BOUNDS_LEFT: Mutex<f64> = Mutex::new(0.0);
+static PANEL_BOUNDS_TOP: Mutex<f64> = Mutex::new(0.0);
+static PANEL_BOUNDS_RIGHT: Mutex<f64> = Mutex::new(0.0);
+static PANEL_BOUNDS_BOTTOM: Mutex<f64> = Mutex::new(0.0);
+
 /// Safari user agent — matches the real WKWebView engine (AppleWebKit/605.1.15).
 /// Using Chrome UA causes Google to detect a UA/engine mismatch and block login.
 pub const CHROME_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15";
@@ -757,13 +764,41 @@ pub fn current_screen_size() -> (f64, f64) {
     (w, h)
 }
 
-/// Show sidebar + active page viewer on the screen where the cursor is
+/// Get actual panel bounds (left, top, right, bottom) set by show_panel_inner
+pub fn panel_bounds() -> (f64, f64, f64, f64) {
+    let left = PANEL_BOUNDS_LEFT.lock().map(|g| *g).unwrap_or(0.0);
+    let top = PANEL_BOUNDS_TOP.lock().map(|g| *g).unwrap_or(0.0);
+    let right = PANEL_BOUNDS_RIGHT.lock().map(|g| *g).unwrap_or(0.0);
+    let bottom = PANEL_BOUNDS_BOTTOM.lock().map(|g| *g).unwrap_or(0.0);
+    (left, top, right, bottom)
+}
+
+/// Show sidebar from edge hover — does NOT set manual show mode,
+/// so hover detector uses simple "cursor leaves → hide" logic.
+pub fn show_panel_from_edge(app: &AppHandle) {
+    // Don't mark as manual show — edge hover uses normal hide logic
+    update_current_screen();
+    show_panel_inner(app);
+}
+
+/// Show sidebar + active page viewer (manual trigger — sets manual show mode)
 pub fn show_panel(app: &AppHandle) {
     hover_detector::mark_manual_show();
     update_current_screen();
+    show_panel_inner(app);
+}
+
+/// Shared panel display logic (used by both show_panel and show_panel_from_edge)
+fn show_panel_inner(app: &AppHandle) {
     let sx = current_screen_x();
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
+
+    // Store actual panel bounds for hover detector
+    if let Ok(mut g) = PANEL_BOUNDS_LEFT.lock() { *g = sx; }
+    if let Ok(mut g) = PANEL_BOUNDS_TOP.lock() { *g = panel_y; }
+    if let Ok(mut g) = PANEL_BOUNDS_RIGHT.lock() { *g = sx + TAB_BAR_WIDTH + viewer_width; }
+    if let Ok(mut g) = PANEL_BOUNDS_BOTTOM.lock() { *g = panel_y + panel_height; }
 
     // Show sidebar on current screen's left edge
     if let Some(w) = app.get_webview_window(SIDEBAR_LABEL) {
@@ -791,6 +826,9 @@ pub fn show_panel(app: &AppHandle) {
 
 /// Hide sidebar + all page viewers, freezing all tabs to save memory/CPU
 pub fn hide_panel(app: &AppHandle) {
+    // Clear manual show state so next show starts fresh
+    hover_detector::clear_manual_show();
+
     // Hide sidebar
     if let Ok(p) = app.get_webview_panel(SIDEBAR_LABEL) {
         p.order_out(None);

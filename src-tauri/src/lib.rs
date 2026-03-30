@@ -76,6 +76,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::toggle_sidebar,
+            commands::toggle_pin,
+            commands::is_pinned,
             commands::show_sidebar,
             commands::hide_sidebar,
             commands::open_system_app,

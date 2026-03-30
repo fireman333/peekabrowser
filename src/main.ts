@@ -195,6 +195,21 @@ function setupEventListeners() {
   settingsBtn.addEventListener("click", async () => {
     try { await invoke("open_settings_window"); } catch (_e) {}
   });
+  // Pin button — toggle auto-hide
+  const pinBtn = document.getElementById("pin-btn");
+  if (pinBtn) {
+    // Initialize pin state
+    invoke<boolean>("is_pinned").then((pinned) => {
+      pinBtn.classList.toggle("pinned", pinned);
+    }).catch(() => {});
+
+    pinBtn.addEventListener("click", async () => {
+      try {
+        const pinned = await invoke<boolean>("toggle_pin");
+        pinBtn.classList.toggle("pinned", pinned);
+      } catch (_e) {}
+    });
+  }
   // New tab button
   document.getElementById("new-tab-btn")?.addEventListener("click", async () => {
     const activePage = pages.find((p) => p.id === activePageId);

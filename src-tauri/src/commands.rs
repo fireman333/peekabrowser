@@ -37,6 +37,19 @@ pub fn hide_sidebar(app: AppHandle) {
     crate::panel::hide_panel(&app);
 }
 
+/// Toggle pin state — when pinned, auto-hide is disabled.
+/// Returns the new pinned state.
+#[tauri::command]
+pub fn toggle_pin() -> bool {
+    crate::panel::hover_detector::toggle_pin()
+}
+
+/// Check if panel is currently pinned
+#[tauri::command]
+pub fn is_pinned() -> bool {
+    crate::panel::hover_detector::is_pinned()
+}
+
 #[tauri::command]
 pub fn open_system_app(app_name: String) -> Result<(), String> {
     std::process::Command::new("open")
@@ -937,6 +950,7 @@ fn build_inject_js(escaped_text: &str) -> String {
         'textarea[placeholder*="Message"]',
         'textarea[placeholder*="Ask"]',
         'textarea:not([readonly])',
+        'input[type="search"]:not([readonly])',
         'input[type="text"]:not([readonly])',
         '[contenteditable="true"]'
     ];

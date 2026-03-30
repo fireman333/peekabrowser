@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_1.3.0_aarch64.dmg`
+1. 開啟 `Peekabrowser_1.4.0_aarch64.dmg`
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. 第一次開啟時，macOS 會提示「無法打開 Peekabrowser，因為它來自未識別的開發者」
 4. 前往 **系統設定 → 隱私與安全性**，找到 Peekabrowser 的提示，點擊 **「仍要打開」**
@@ -203,7 +203,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_1.3.0_aarch64.dmg`
+1. Open `Peekabrowser_1.4.0_aarch64.dmg`
 2. Drag `Peekabrowser.app` to the Applications folder
 3. On first launch, macOS will show "Peekabrowser cannot be opened because it is from an unidentified developer"
 4. Go to **System Settings → Privacy & Security**, find the Peekabrowser prompt, and click **"Open Anyway"**
@@ -389,14 +389,44 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-**WebView 記憶體管理 (v1.3.0)**
+### 版本紀錄
 
-Peekabrowser 採用 Window Pool Reuse 機制管理記憶體：關閉的分頁 WebView 會被回收並在開啟新分頁時重複利用，而非每次都建立新的 WebContent process。這讓長時間使用時記憶體消耗維持穩定，不會隨著開關分頁次數而持續增長。
+**v1.4.0 — 多螢幕修正、Cmd+C+C 穩定性、Pin 固定功能**
 
-**WebView Memory Management (v1.3.0)**
+- 🖥️ **多螢幕 auto-hide 修正**：側邊欄在副螢幕上現在能正確回應滑鼠移入移出的自動隱藏
+- 📌 **Pin 固定功能**：側邊欄新增 📌 按鈕，開啟後 app 不會自動隱藏，僅能透過 `⌘⇧A` 手動隱藏
+- 📋 **Cmd+C+C 穩定性提升**：修正複製檔案或圖片等非文字內容後，後續的 Cmd+C+C 功能會永久失效的問題
+- 🔍 **搜尋框相容性擴充**：新增 `input[type="search"]` 支援，PubMed 等使用搜尋型輸入框的網站現在可正常自動貼上
+- ⚡ **Hover detector 重構**：auto-hide 邏輯不再被螢幕邊緣偵測阻擋，確保所有場景下都能正常隱藏
 
-Peekabrowser uses a Window Pool Reuse mechanism to manage memory: closed tab WebViews are recycled and reused when opening new tabs, instead of creating new WebContent processes each time. This keeps memory usage stable during long sessions, preventing growth from repeated tab open/close cycles.
+**v1.3.0 — WebView 記憶體管理**
+
+- Peekabrowser 採用 Window Pool Reuse 機制管理記憶體：關閉的分頁 WebView 會被回收並在開啟新分頁時重複利用，而非每次都建立新的 WebContent process。這讓長時間使用時記憶體消耗維持穩定，不會隨著開關分頁次數而持續增長。
+
+**v1.2.0 — 新分頁按鈕、在瀏覽器中開啟**
+
+**v1.1.0 — 行事曆/提醒事項整合、OCR、排序**
 
 ---
 
-Peekabrowser v1.3.0 | Built with [Tauri](https://tauri.app)
+### Release Notes
+
+**v1.4.0 — Multi-screen fix, Cmd+C+C reliability, Pin feature**
+
+- 🖥️ **Multi-screen auto-hide fix**: Sidebar now correctly auto-hides on secondary monitors when the cursor enters and leaves the panel area
+- 📌 **Pin feature**: New 📌 button on the sidebar prevents auto-hide; only `⌘⇧A` can hide the sidebar when pinned
+- 📋 **Cmd+C+C reliability**: Fixed an issue where copying non-text content (files, images) would permanently break the Cmd+C+C detection until app restart
+- 🔍 **Search input compatibility**: Added `input[type="search"]` support so sites like PubMed now auto-paste correctly
+- ⚡ **Hover detector refactor**: Auto-hide logic is no longer blocked by edge detection, ensuring reliable hide behavior in all scenarios
+
+**v1.3.0 — WebView Memory Management**
+
+- Peekabrowser uses a Window Pool Reuse mechanism to manage memory: closed tab WebViews are recycled and reused when opening new tabs, instead of creating new WebContent processes each time. This keeps memory usage stable during long sessions, preventing growth from repeated tab open/close cycles.
+
+**v1.2.0 — New Tab button, Open in Browser**
+
+**v1.1.0 — Calendar/Reminders integration, OCR, Reorder**
+
+---
+
+Peekabrowser v1.4.0 | Built with [Tauri](https://tauri.app)

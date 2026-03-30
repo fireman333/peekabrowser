@@ -4,6 +4,10 @@ use tauri::AppHandle;
 
 static HOVER_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Flag: panel is pinned — auto-hide is disabled entirely.
+/// Only manual toggle (⌘⇧A) can hide the panel.
+static PINNED: AtomicBool = AtomicBool::new(false);
+
 /// Flag: panel was shown manually (Cmd+C+C, screenshot, tray, shortcut).
 /// When true, panel won't auto-hide until cursor visits it then leaves.
 static MANUAL_SHOW_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -27,10 +31,22 @@ pub fn mark_manual_show() {
     MANUAL_SHOW_TS.store(now, Ordering::Relaxed);
 }
 
-/// Clear the manual show state (e.g. when panel is hidden)
-fn clear_manual_show() {
+/// Clear the manual show state (called when panel is hidden by any means)
+pub fn clear_manual_show() {
     MANUAL_SHOW_ACTIVE.store(false, Ordering::Relaxed);
     CURSOR_HAS_VISITED.store(false, Ordering::Relaxed);
+}
+
+/// Toggle pin state. Returns new pinned state.
+pub fn toggle_pin() -> bool {
+    let was_pinned = PINNED.load(Ordering::Relaxed);
+    PINNED.store(!was_pinned, Ordering::Relaxed);
+    !was_pinned
+}
+
+/// Check if panel is pinned
+pub fn is_pinned() -> bool {
+    PINNED.load(Ordering::Relaxed)
 }
 
 /// Check if we're in "manual show, waiting for visit-then-leave" mode
@@ -76,19 +92,17 @@ fn near_any_screen_left_edge(cx: f64, cy: f64, edge_zone: f64) -> Option<super::
 }
 
 /// Check if cursor is inside the panel bounds (sidebar + viewer area)
-/// with generous padding on bottom and right to avoid accidental hide
+/// Uses actual panel bounds set by show_panel_inner for accuracy on all screens.
 fn cursor_in_panel(cx: f64, cy: f64) -> bool {
-    let sx = super::current_screen_x();
-    let (panel_height, panel_y) = super::panel_geometry();
-    let right_edge = sx + super::TAB_BAR_WIDTH + super::get_viewer_width();
+    let (left, top, right, bottom) = super::panel_bounds();
 
     const RIGHT_PAD: f64 = 80.0;
     const BOTTOM_PAD: f64 = 150.0;
     const TOP_PAD: f64 = 40.0;
 
-    cx >= sx && cx <= right_edge + RIGHT_PAD
-        && cy >= (panel_y - TOP_PAD).max(0.0)
-        && cy <= panel_y + panel_height + BOTTOM_PAD
+    cx >= left && cx <= right + RIGHT_PAD
+        && cy >= top - TOP_PAD
+        && cy <= bottom + BOTTOM_PAD
 }
 
 fn hover_loop(app: AppHandle) {
@@ -107,7 +121,9 @@ fn hover_loop(app: AppHandle) {
 
         // Check if cursor is near the left edge of ANY screen
         let near_edge = near_any_screen_left_edge(cx, cy, EDGE_ZONE_PX);
+        let is_near_edge = near_edge.is_some();
 
+        // ── Edge hover: show panel when cursor dwells at left edge ──
         if let Some(screen) = near_edge {
             if !was_near_edge {
                 dwell_start = Some(Instant::now());
@@ -118,12 +134,11 @@ fn hover_loop(app: AppHandle) {
                     let screen_clone = screen.clone();
                     let app2 = app.clone();
                     let _ = app.run_on_main_thread(move || {
-                        // Manually update current screen
                         if let Ok(mut g) = super::CURRENT_SCREEN_X.lock() { *g = screen_clone.x; }
                         if let Ok(mut g) = super::CURRENT_SCREEN_Y.lock() { *g = screen_clone.y; }
                         if let Ok(mut g) = super::CURRENT_SCREEN_W.lock() { *g = screen_clone.width; }
                         if let Ok(mut g) = super::CURRENT_SCREEN_H.lock() { *g = screen_clone.height; }
-                        super::show_panel(&app2);
+                        super::show_panel_from_edge(&app2);
                     });
                     dwell_start = None;
                 }
@@ -131,50 +146,47 @@ fn hover_loop(app: AppHandle) {
         } else {
             was_near_edge = false;
             dwell_start = None;
+        }
 
-            // Auto-hide logic when panel is visible
-            if super::is_panel_visible(&app) {
-                let in_panel = cursor_in_panel(cx, cy);
+        // ── Auto-hide logic (runs regardless of near_edge, skip if pinned) ──
+        if super::is_panel_visible(&app) && !PINNED.load(Ordering::Relaxed) {
+            let in_panel = cursor_in_panel(cx, cy);
 
-                if is_manual_show_active() {
-                    // Manual show mode: wait for cursor to visit, then leave
-                    if in_panel {
-                        // Cursor entered the panel — mark as visited
-                        CURSOR_HAS_VISITED.store(true, Ordering::Relaxed);
-                    } else if CURSOR_HAS_VISITED.load(Ordering::Relaxed) {
-                        // Cursor visited and now left — allow hiding
-                        std::thread::sleep(Duration::from_millis(150));
-                        let (cx2, cy2) = get_cursor_pos_topleft();
-                        if !cursor_in_panel(cx2, cy2) {
-                            clear_manual_show();
-                            let app2 = app.clone();
-                            let _ = app.run_on_main_thread(move || {
-                                super::hide_panel(&app2);
-                            });
-                        }
-                    } else if is_fallback_expired() {
-                        // Absolute fallback: hide after 60s even if never visited
+            if is_manual_show_active() {
+                // Manual show mode: wait for cursor to visit, then leave
+                if in_panel {
+                    CURSOR_HAS_VISITED.store(true, Ordering::Relaxed);
+                } else if CURSOR_HAS_VISITED.load(Ordering::Relaxed) {
+                    // Cursor visited and now left — allow hiding
+                    std::thread::sleep(Duration::from_millis(150));
+                    let (cx2, cy2) = get_cursor_pos_topleft();
+                    if !cursor_in_panel(cx2, cy2) {
                         clear_manual_show();
                         let app2 = app.clone();
                         let _ = app.run_on_main_thread(move || {
                             super::hide_panel(&app2);
                         });
                     }
-                    // else: cursor hasn't visited yet and fallback not expired — keep showing
-                } else {
-                    // Normal mode (edge hover): hide when cursor leaves panel area
-                    let sx = super::current_screen_x();
-                    let actual_right_edge = sx + super::TAB_BAR_WIDTH + super::get_viewer_width() + LEAVE_PADDING;
+                } else if is_fallback_expired() {
+                    clear_manual_show();
+                    let app2 = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        super::hide_panel(&app2);
+                    });
+                }
+            } else if !is_near_edge {
+                // Normal mode (edge hover): hide when cursor leaves panel area
+                // Only check when NOT near edge (so edge dwell doesn't cause immediate hide)
+                let (left, _, right, _) = super::panel_bounds();
 
-                    if cx > actual_right_edge || cx < sx - LEAVE_PADDING {
-                        std::thread::sleep(Duration::from_millis(150));
-                        let (cx2, _) = get_cursor_pos_topleft();
-                        if cx2 > actual_right_edge || cx2 < sx - LEAVE_PADDING {
-                            let app2 = app.clone();
-                            let _ = app.run_on_main_thread(move || {
-                                super::hide_panel(&app2);
-                            });
-                        }
+                if cx > right + LEAVE_PADDING || cx < left - LEAVE_PADDING {
+                    std::thread::sleep(Duration::from_millis(150));
+                    let (cx2, _) = get_cursor_pos_topleft();
+                    if cx2 > right + LEAVE_PADDING || cx2 < left - LEAVE_PADDING {
+                        let app2 = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            super::hide_panel(&app2);
+                        });
                     }
                 }
             }

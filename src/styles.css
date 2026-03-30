@@ -229,6 +229,12 @@ html, body {
   color: var(--text-muted);
 }
 
+#pin-btn.pinned {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  border-radius: 6px;
+}
+
 #width-controls {
   display: flex;
   gap: 1px;
