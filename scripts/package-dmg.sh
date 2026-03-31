@@ -1,25 +1,41 @@
 #!/bin/bash
 # Package Peekabrowser.app + Install.command into a custom DMG
-# Usage: ./scripts/package-dmg.sh [version]
-# Example: ./scripts/package-dmg.sh 1.4.0
+# Usage: ./scripts/package-dmg.sh [version] [arch]
+# Example: ./scripts/package-dmg.sh 1.4.0          (default: aarch64)
+#          ./scripts/package-dmg.sh 1.4.0 x86_64    (Intel)
+#          ./scripts/package-dmg.sh 1.4.0 aarch64   (Apple Silicon)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 VERSION="${1:-$(grep '"version"' "$PROJECT_DIR/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')}"
-APP_PATH="$PROJECT_DIR/src-tauri/target/release/bundle/macos/Peekabrowser.app"
-DMG_OUTPUT="$PROJECT_DIR/src-tauri/target/release/bundle/dmg/Peekabrowser_${VERSION}_aarch64.dmg"
+ARCH="${2:-aarch64}"
+
+# Set paths based on architecture
+if [ "$ARCH" = "x86_64" ]; then
+    APP_PATH="$PROJECT_DIR/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Peekabrowser.app"
+    DMG_SUFFIX="x86_64"
+else
+    APP_PATH="$PROJECT_DIR/src-tauri/target/release/bundle/macos/Peekabrowser.app"
+    DMG_SUFFIX="aarch64"
+fi
+
+DMG_OUTPUT="$PROJECT_DIR/src-tauri/target/release/bundle/dmg/Peekabrowser_${VERSION}_${DMG_SUFFIX}.dmg"
 INSTALL_SCRIPT="$SCRIPT_DIR/Install.command"
 TEMP_DIR=$(mktemp -d)
 DMG_STAGE="$TEMP_DIR/dmg-stage"
 
-echo "📦 Packaging Peekabrowser v${VERSION}..."
+echo "📦 Packaging Peekabrowser v${VERSION} (${ARCH})..."
 
 # Verify app exists
 if [ ! -d "$APP_PATH" ]; then
     echo "❌ App not found at: $APP_PATH"
-    echo "   Run 'cargo tauri build' first."
+    if [ "$ARCH" = "x86_64" ]; then
+        echo "   Run 'cargo tauri build --target x86_64-apple-darwin' first."
+    else
+        echo "   Run 'cargo tauri build' first."
+    fi
     exit 1
 fi
 
@@ -54,4 +70,4 @@ rm -rf "$TEMP_DIR"
 
 echo ""
 echo "✅ DMG created: $DMG_OUTPUT"
-echo "   Contents: Peekabrowser.app, Install.command, Applications (symlink)"
+echo "   Contents: Peekabrowser.app (${ARCH}), Install.command, Applications (symlink)"
