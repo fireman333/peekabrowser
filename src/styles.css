@@ -60,7 +60,9 @@ html, body {
   gap: 2px;
   flex: 1;
   width: 100%;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 #tab-actions {
@@ -354,5 +356,19 @@ html, body {
 ::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
+}
+
+/* Tab list scrollbar: only visible on hover */
+#tab-list::-webkit-scrollbar {
+  width: 3px;
+}
+
+#tab-list::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 2px;
+}
+
+#tab-list:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
 }
 
