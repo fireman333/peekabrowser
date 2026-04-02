@@ -6,6 +6,7 @@ interface Destination {
   url: string;
   icon: string;
   order: number;
+  clip_prompt: string;
 }
 
 interface ShortcutConfig {
@@ -126,6 +127,7 @@ function startEdit(d: Destination) {
   (document.getElementById("new-name") as HTMLInputElement).value = d.name;
   (document.getElementById("new-url") as HTMLInputElement).value = d.url;
   (document.getElementById("new-icon") as HTMLInputElement).value = d.icon;
+  (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value = d.clip_prompt || "";
   addForm.classList.remove("hidden");
   // Update form title and button
   const formTitle = addForm.querySelector("h2");
@@ -181,10 +183,12 @@ function setupListeners() {
     resetForm();
   });
 
+
   saveBtn.addEventListener("click", async () => {
     const name = (document.getElementById("new-name") as HTMLInputElement).value.trim();
     const url = (document.getElementById("new-url") as HTMLInputElement).value.trim();
     const icon = (document.getElementById("new-icon") as HTMLInputElement).value.trim();
+    const clipPrompt = (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value;
     if (!name || !url) {
       alert("Name and URL are required");
       return;
@@ -194,13 +198,15 @@ function setupListeners() {
       if (editingId) {
         // Update existing destination
         const updated = await invoke<Destination>("update_destination", {
-          id: editingId, name, url, icon,
+          id: editingId, name, url, icon, clipPrompt,
         });
         const idx = destinations.findIndex((d) => d.id === editingId);
         if (idx >= 0) destinations[idx] = updated;
       } else {
         // Add new destination
-        const newDest = await invoke<Destination>("add_destination", { name, url, icon });
+        const newDest = await invoke<Destination>("add_destination", {
+          name, url, icon, clipPrompt,
+        });
         destinations.push(newDest);
       }
       addForm.classList.add("hidden");
@@ -217,6 +223,7 @@ function resetForm() {
   (document.getElementById("new-name") as HTMLInputElement).value = "";
   (document.getElementById("new-url") as HTMLInputElement).value = "";
   (document.getElementById("new-icon") as HTMLInputElement).value = "";
+  (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value = "";
   const formTitle = addForm.querySelector("h2");
   if (formTitle) formTitle.textContent = "Add Destination";
   saveBtn.textContent = "Save";

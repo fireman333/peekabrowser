@@ -6,6 +6,7 @@ interface Destination {
   name: string;
   url: string;
   icon: string;
+  clip_prompt: string;
 }
 
 interface PickerData {

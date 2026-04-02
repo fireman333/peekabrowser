@@ -11,6 +11,8 @@ pub struct Destination {
     pub url: String,
     pub icon: String,
     pub order: usize,
+    #[serde(default)]
+    pub clip_prompt: String,
 }
 
 pub struct DestinationManager {
@@ -63,13 +65,21 @@ impl DestinationManager {
         self.save();
     }
 
-    pub fn update(&self, id: &str, name: String, url: String, icon: String) -> Option<Destination> {
+    pub fn update(
+        &self,
+        id: &str,
+        name: String,
+        url: String,
+        icon: String,
+        clip_prompt: String,
+    ) -> Option<Destination> {
         let updated = {
             let mut dests = self.destinations.lock().unwrap();
             if let Some(dest) = dests.iter_mut().find(|d| d.id == id) {
                 dest.name = name;
                 dest.url = url;
                 dest.icon = icon;
+                dest.clip_prompt = clip_prompt;
                 Some(dest.clone())
             } else {
                 None

@@ -72,6 +72,7 @@ pub fn add_destination(
     name: String,
     url: String,
     icon: String,
+    clip_prompt: Option<String>,
 ) -> Result<Destination, String> {
     // Validate URL (skip system:// internal URLs)
     let validated_url = if url.starts_with("system://") {
@@ -90,6 +91,7 @@ pub fn add_destination(
         url: validated_url,
         icon,
         order,
+        clip_prompt: clip_prompt.unwrap_or_default(),
     };
     dest_manager.add(dest.clone());
 
@@ -109,9 +111,10 @@ pub fn update_destination(
     name: String,
     url: String,
     icon: String,
+    clip_prompt: Option<String>,
 ) -> Result<Destination, String> {
     dest_manager
-        .update(&id, name, url, icon)
+        .update(&id, name, url, icon, clip_prompt.unwrap_or_default())
         .ok_or_else(|| "Destination not found".to_string())
         .map(|dest| {
             if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
@@ -786,10 +789,17 @@ pub fn pick_destination(
 
     crate::panel::set_active_page_label(&page_label);
 
+    // ─── Prompt prefix: prepend if configured ───
+    let inject_text = if !dest.clip_prompt.is_empty() {
+        format!("{}{}", dest.clip_prompt, text)
+    } else {
+        text.clone()
+    };
+
     // Inject content after page loads
     let app2 = app.clone();
     let label_clone = page_label.clone();
-    let is_screenshot = text.starts_with("__screenshot__:");
+    let is_screenshot = inject_text.starts_with("__screenshot__:");
     std::thread::spawn(move || {
         if is_screenshot {
             // Screenshot mode: inject image via synthetic paste event with DataTransfer.
@@ -862,8 +872,8 @@ pub fn pick_destination(
                 }
             }
         } else {
-            // Text mode: inject text
-            let escaped = text
+            // ─── Normal mode: inject text with retries ───
+            let escaped = inject_text
                 .replace('\\', "\\\\")
                 .replace('`', "\\`")
                 .replace('$', "\\$");

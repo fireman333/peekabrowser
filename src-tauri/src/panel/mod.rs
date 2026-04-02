@@ -1,7 +1,7 @@
 pub mod hover_detector;
 
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_nspanel::{ManagerExt, WebviewWindowExt};
 
 /// Remembered viewer width — persists across show/hide cycles
@@ -20,6 +20,14 @@ static RECYCLED_POOL: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Max recycled windows to keep. Excess are abandoned on about:blank (~2-5MB each).
 const MAX_RECYCLED_POOL_SIZE: usize = 3;
+
+/// Track when each page was last backgrounded (label → Instant).
+/// Pages idle longer than MAX_BACKGROUND_SECS are auto-destroyed.
+static BACKGROUND_TIMESTAMPS: Mutex<Option<std::collections::HashMap<String, std::time::Instant>>> =
+    Mutex::new(None);
+
+/// Max seconds a page can stay frozen in background before auto-cleanup
+const MAX_BACKGROUND_SECS: u64 = 120;
 
 /// Current screen origin (top-left coords) where the panel is displayed
 static CURRENT_SCREEN_X: Mutex<f64> = Mutex::new(0.0);
@@ -429,6 +437,89 @@ pub fn unregister_page_label(label: &str) {
     }
 }
 
+/// Mark pages as backgrounded (for auto-cleanup tracking)
+fn mark_pages_backgrounded(labels: &[String]) {
+    if let Ok(mut guard) = BACKGROUND_TIMESTAMPS.lock() {
+        let map = guard.get_or_insert_with(std::collections::HashMap::new);
+        let now = std::time::Instant::now();
+        for label in labels {
+            map.insert(label.clone(), now);
+        }
+    }
+}
+
+/// Remove a page from background tracking (it's now active)
+fn unmark_page_backgrounded(label: &str) {
+    if let Ok(mut guard) = BACKGROUND_TIMESTAMPS.lock() {
+        if let Some(map) = guard.as_mut() {
+            map.remove(label);
+        }
+    }
+}
+
+/// Auto-destroy pages that have been frozen in background too long.
+/// Called from a background thread so it doesn't block UI.
+fn cleanup_stale_background_pages(app: &AppHandle) {
+    let stale_labels: Vec<String> = if let Ok(mut guard) = BACKGROUND_TIMESTAMPS.lock() {
+        if let Some(map) = guard.as_mut() {
+            let cutoff = std::time::Duration::from_secs(MAX_BACKGROUND_SECS);
+            let stale: Vec<String> = map
+                .iter()
+                .filter(|(_, ts)| ts.elapsed() > cutoff)
+                .map(|(label, _)| label.clone())
+                .collect();
+            for label in &stale {
+                map.remove(label);
+            }
+            stale
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    if stale_labels.is_empty() {
+        return;
+    }
+
+    // Destroy stale pages and remove from tab manager
+    let tab_mgr = app.try_state::<std::sync::Mutex<crate::webviews::WebViewTabManager>>();
+
+    for label in &stale_labels {
+        log::info!("Auto-destroying stale background page: {}", label);
+
+        // Remove from tab manager
+        if let Some(ref mgr_state) = tab_mgr {
+            if let Ok(mut mgr) = mgr_state.lock() {
+                // Find page by label and remove it
+                let page_id = mgr.get_all_pages().iter()
+                    .find(|p| &p.label == label)
+                    .map(|p| p.id.clone());
+                if let Some(pid) = page_id {
+                    mgr.remove_page(&pid);
+                }
+            }
+        }
+
+        // Destroy the webview panel
+        destroy_page_panel(app, label);
+    }
+
+    // Notify sidebar of page changes
+    if let Some(ref mgr_state) = tab_mgr {
+        if let Ok(mgr) = mgr_state.lock() {
+            if let Some(sidebar) = app.get_webview_window(SIDEBAR_LABEL) {
+                let pages = mgr.get_all_pages();
+                let _ = sidebar.emit("pages-updated", &pages);
+                if let Some(ref active_id) = mgr.active_page_id {
+                    let _ = sidebar.emit("active-page-changed", active_id);
+                }
+            }
+        }
+    }
+}
+
 /// Create a new page viewer NSPanel with Safari UA
 pub fn create_page_panel(app: &AppHandle, label: &str, url: &str) -> tauri::Result<()> {
     let sx = current_screen_x();
@@ -466,7 +557,9 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
 
-    // Hide and FREEZE all other page viewers (stops JS, media, timers)
+    // Hide all other page viewers (move off-screen + hide panel immediately)
+    // Freeze is done ASYNC in a spawned thread so a stuck page can't block us
+    let mut to_freeze: Vec<String> = Vec::new();
     if let Ok(guard) = ALL_PAGE_LABELS.lock() {
         for other in guard.iter() {
             if other != label {
@@ -475,10 +568,28 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
                 }
                 if let Some(w) = app.get_webview_window(other) {
                     let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
+                }
+                to_freeze.push(other.clone());
+            }
+        }
+    }
+
+    // Record background timestamp for hidden pages
+    mark_pages_backgrounded(&to_freeze);
+
+    // Remove target page from background tracking (it's now active)
+    unmark_page_backgrounded(label);
+
+    // Async freeze: spawn thread so eval() on a stuck page doesn't block UI
+    if !to_freeze.is_empty() {
+        let app_freeze = app.clone();
+        std::thread::spawn(move || {
+            for lbl in &to_freeze {
+                if let Some(w) = app_freeze.get_webview_window(lbl) {
                     let _ = w.eval(FREEZE_BACKGROUND_SCRIPT);
                 }
             }
-        }
+        });
     }
 
     // Show and THAW the target page viewer
@@ -493,6 +604,12 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
     }
 
     set_active_page_label(label);
+
+    // Trigger background cleanup of stale pages
+    let app_cleanup = app.clone();
+    std::thread::spawn(move || {
+        cleanup_stale_background_pages(&app_cleanup);
+    });
 }
 
 /// Destroy a page viewer panel.
@@ -512,6 +629,7 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
 /// without a native Tauri API for safe window disposal in NSPanel mode.
 pub fn destroy_page_panel(app: &AppHandle, label: &str) {
     unregister_page_label(label);
+    unmark_page_backgrounded(label);
 
     // Hide the NSPanel
     if let Ok(p) = app.get_webview_panel(label) {
@@ -843,7 +961,8 @@ pub fn hide_panel(app: &AppHandle) {
         let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
     }
 
-    // Hide and FREEZE all page viewers (stops all JS execution, media, timers)
+    // Hide all page viewers immediately (move off-screen)
+    let mut to_freeze: Vec<String> = Vec::new();
     if let Ok(guard) = ALL_PAGE_LABELS.lock() {
         for label in guard.iter() {
             if let Ok(p) = app.get_webview_panel(label) {
@@ -851,9 +970,24 @@ pub fn hide_panel(app: &AppHandle) {
             }
             if let Some(w) = app.get_webview_window(label) {
                 let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
-                let _ = w.eval(FREEZE_BACKGROUND_SCRIPT);
             }
+            to_freeze.push(label.clone());
         }
+    }
+
+    // Record all pages as backgrounded
+    mark_pages_backgrounded(&to_freeze);
+
+    // Async freeze: don't let a stuck page block the hide operation
+    if !to_freeze.is_empty() {
+        let app_freeze = app.clone();
+        std::thread::spawn(move || {
+            for lbl in &to_freeze {
+                if let Some(w) = app_freeze.get_webview_window(lbl) {
+                    let _ = w.eval(FREEZE_BACKGROUND_SCRIPT);
+                }
+            }
+        });
     }
 }
 
