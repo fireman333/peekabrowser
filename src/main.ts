@@ -217,6 +217,13 @@ function setupEventListeners() {
       try { await invoke("new_tab", { id: activePage.dest_id }); } catch (_e) {}
     }
   });
+  // Back / Forward buttons
+  document.getElementById("back-btn")?.addEventListener("click", async () => {
+    try { await invoke("go_back"); } catch (_e) {}
+  });
+  document.getElementById("forward-btn")?.addEventListener("click", async () => {
+    try { await invoke("go_forward"); } catch (_e) {}
+  });
   // Open in default browser button
   document.getElementById("open-browser-btn")?.addEventListener("click", async () => {
     try { await invoke("open_active_in_browser"); } catch (_e) {}
@@ -238,6 +245,12 @@ function setupEventListeners() {
       if (activePageId) {
         try { await invoke("close_page", { pageId: activePageId }); } catch (_e) {}
       }
+    } else if (e.metaKey && e.key === "[") {
+      e.preventDefault();
+      try { await invoke("go_back"); } catch (_e) {}
+    } else if (e.metaKey && e.key === "]") {
+      e.preventDefault();
+      try { await invoke("go_forward"); } catch (_e) {}
     } else if (e.metaKey && e.key === "n") {
       e.preventDefault();
       // Open a new tab for the active destination

@@ -164,6 +164,12 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
                     }
                 }
             } catch(err) { console.log('close_page err', err); }
+        } else if (e.metaKey && e.key === '[') {
+            e.preventDefault();
+            history.back();
+        } else if (e.metaKey && e.key === ']') {
+            e.preventDefault();
+            history.forward();
         } else if (e.metaKey && e.key === 'n') {
             e.preventDefault();
             // Use Tauri IPC to open a new tab for the same destination

@@ -102,6 +102,8 @@ pub fn run() {
             commands::close_page,
             commands::take_screenshot,
             commands::reload_active_page,
+            commands::go_back,
+            commands::go_forward,
             commands::open_active_in_browser,
             commands::get_shortcuts,
             commands::save_shortcuts,

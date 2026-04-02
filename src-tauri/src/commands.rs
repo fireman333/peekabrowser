@@ -1113,6 +1113,26 @@ pub fn reload_active_page(app: AppHandle) {
     }
 }
 
+/// Navigate the active page viewer back
+#[tauri::command]
+pub fn go_back(app: AppHandle) {
+    if let Some(label) = crate::panel::get_active_page_label() {
+        if let Some(viewer) = app.get_webview_window(&label) {
+            let _ = viewer.eval("history.back()");
+        }
+    }
+}
+
+/// Navigate the active page viewer forward
+#[tauri::command]
+pub fn go_forward(app: AppHandle) {
+    if let Some(label) = crate::panel::get_active_page_label() {
+        if let Some(viewer) = app.get_webview_window(&label) {
+            let _ = viewer.eval("history.forward()");
+        }
+    }
+}
+
 /// Open the active page's current URL in the default browser
 #[tauri::command]
 pub fn open_active_in_browser(app: AppHandle) -> Result<(), String> {
