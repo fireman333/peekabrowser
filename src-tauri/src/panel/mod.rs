@@ -49,11 +49,176 @@ pub const CHROME_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) App
 /// Initialization script injected into every page viewer.
 /// - Hides Tauri/WKWebView fingerprints that Google uses to detect embedded browsers
 /// - Intercepts window.open() so OAuth popups navigate in-place
+/// - On Gemini pages: SKIP browser environment modifications to avoid breaking
+///   the streaming channel (Gemini detects overrides and drops SSE connections)
 const BROWSER_COMPAT_SCRIPT: &str = r#"
 (function() {
+    var _isGemini = false;
+    try { _isGemini = location.hostname.includes('gemini.google.com'); } catch(e) {}
+
+    // ─── Keyboard shortcuts (always active) ───
+    document.addEventListener('keydown', function(e) {
+        if (e.metaKey && e.key === 'r') {
+            e.preventDefault();
+            location.reload();
+        } else if (e.metaKey && e.key === 'w') {
+            e.preventDefault();
+            try {
+                var internals = window.__TAURI_INTERNALS__;
+                if (internals && internals.invoke) {
+                    var label = internals.metadata && internals.metadata.currentWebview
+                        ? internals.metadata.currentWebview.label : '';
+                    if (label) internals.invoke('close_page', { pageId: label });
+                }
+            } catch(err) {}
+        } else if (e.metaKey && e.key === '[') {
+            e.preventDefault();
+            history.back();
+        } else if (e.metaKey && e.key === ']') {
+            e.preventDefault();
+            history.forward();
+        } else if (e.metaKey && e.key === 'n') {
+            e.preventDefault();
+            try {
+                var internals = window.__TAURI_INTERNALS__;
+                if (internals && internals.invoke) {
+                    internals.invoke('new_tab_for_active', {});
+                }
+            } catch(err) {}
+        }
+    });
+
+    // ─── On Gemini: hide embedded browser fingerprints + auto-recovery ───
+    if (_isGemini) {
+        // 1. Hide __TAURI_INTERNALS__ — Gemini may detect this foreign object
+        //    and degrade streaming. Keep a private ref for our keyboard shortcuts.
+        try {
+            var _tauriRef = window.__TAURI_INTERNALS__;
+            if (_tauriRef) {
+                Object.defineProperty(window, '__TAURI_INTERNALS__', {
+                    get: function() { return _tauriRef; },
+                    enumerable: false,
+                    configurable: true
+                });
+            }
+        } catch(e) {}
+
+        // 2. Hide webkit.messageHandlers (WKWebView detection)
+        if (window.webkit && window.webkit.messageHandlers) {
+            try {
+                var _handlers = window.webkit.messageHandlers;
+                Object.defineProperty(window.webkit, 'messageHandlers', {
+                    get: function() { return _handlers; },
+                    enumerable: false,
+                    configurable: true
+                });
+            } catch(e) {}
+        }
+
+        // 3. Auto-recovery: detect Gemini error/stuck states and try to recover.
+        var _recovering = false;
+        var _loadingStartTime = 0;
+        var _STUCK_THRESHOLD_MS = 30000; // 30s of spinner = stuck
+
+        function _clickRetryBtn() {
+            // Try clicking Gemini's retry/regenerate button
+            var btns = document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+                var txt = btns[i].textContent || '';
+                if (/重試|再試一次|Retry|Try again|Regenerate/i.test(txt) && btns[i].offsetParent !== null) {
+                    console.log('[Peekabrowser] Clicking retry button: ' + txt.trim());
+                    btns[i].click();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function _clickStopBtn() {
+            // Try clicking Gemini's stop button to cancel stuck request
+            var btns = document.querySelectorAll('button[aria-label*="Stop"], button[aria-label*="停止"]');
+            for (var i = 0; i < btns.length; i++) {
+                if (btns[i].offsetParent !== null) {
+                    console.log('[Peekabrowser] Clicking stop button to cancel stuck request');
+                    btns[i].click();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function _isLoading() {
+            // Detect loading spinner / thinking indicator
+            var indicators = document.querySelectorAll(
+                '.loading-indicator, .thinking-indicator, [aria-label*="Loading"], [aria-label*="載入"], .spinner, mat-progress-spinner'
+            );
+            for (var i = 0; i < indicators.length; i++) {
+                if (indicators[i].offsetParent !== null) return true;
+            }
+            // Also check for stop button presence (means generation in progress)
+            var stopBtns = document.querySelectorAll('button[aria-label*="Stop"], button[aria-label*="停止"]');
+            for (var i = 0; i < stopBtns.length; i++) {
+                if (stopBtns[i].offsetParent !== null) return true;
+            }
+            return false;
+        }
+
+        function _checkGeminiHealth() {
+            if (_recovering) return;
+            try {
+                var bodyText = document.body ? document.body.innerText : '';
+                var hasError = /發生錯誤|出了點問題|Something went wrong|An error occurred|error \(\d+\)/i.test(bodyText);
+
+                if (hasError) {
+                    _recovering = true;
+                    console.log('[Peekabrowser] Gemini error detected, attempting retry...');
+                    // Try retry button first, fallback to reload
+                    if (!_clickRetryBtn()) {
+                        console.log('[Peekabrowser] No retry button found, reloading...');
+                        setTimeout(function() { location.reload(); }, 2000);
+                    }
+                    setTimeout(function() { _recovering = false; }, 8000);
+                    return;
+                }
+
+                // Detect stuck loading: spinner visible for too long
+                var loading = _isLoading();
+                var now = Date.now();
+                if (loading) {
+                    if (_loadingStartTime === 0) _loadingStartTime = now;
+                    var elapsed = now - _loadingStartTime;
+                    if (elapsed > _STUCK_THRESHOLD_MS) {
+                        _recovering = true;
+                        console.log('[Peekabrowser] Gemini stuck for ' + Math.round(elapsed/1000) + 's, stopping...');
+                        _clickStopBtn();
+                        _loadingStartTime = 0;
+                        setTimeout(function() { _recovering = false; }, 5000);
+                    }
+                } else {
+                    _loadingStartTime = 0;
+                }
+            } catch(e) {}
+        }
+
+        function _startHealthCheck() {
+            setTimeout(function() {
+                setInterval(_checkGeminiHealth, 3000);
+            }, 8000);
+        }
+        if (document.readyState === 'complete') _startHealthCheck();
+        else window.addEventListener('load', _startHealthCheck);
+
+        // 4. Keep-alive: prevent WKWebView content process from going idle.
+        //    A lightweight periodic DOM read keeps the JS engine and network
+        //    process active, reducing SSE disconnections.
+        setInterval(function() {
+            try { void document.hidden; } catch(e) {}
+        }, 10000);
+
+        return;
+    }
+
     // 1. Hide Tauri's WKWebView IPC fingerprint.
-    //    Google checks window.webkit.messageHandlers to detect embedded WebViews.
-    //    Save a private ref for Tauri, then make it invisible to page scripts.
     if (window.webkit && window.webkit.messageHandlers) {
         try {
             var _tauriHandlers = window.webkit.messageHandlers;
@@ -66,12 +231,9 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
     }
 
     // 2. Intercept window.open — WKWebView blocks popups by default.
-    //    Skip override on OAuth domain pages (they need native window.open behavior).
-    //    On regular pages, redirect popup navigations in-place.
     var _oauthHosts = ['accounts.google.com', 'accounts.google.co.jp', 'accounts.google.co.uk',
         'login.microsoftonline.com', 'appleid.apple.com', 'auth0.com',
-        'login.yahoo.com', 'id.apple.com', 'myaccount.google.com',
-        'gemini.google.com'];
+        'login.yahoo.com', 'id.apple.com', 'myaccount.google.com'];
     var _isOAuthPage = false;
     try {
         for (var d of _oauthHosts) {
@@ -90,14 +252,12 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
                 }
                 return null;
             }
-            // For any URL, try original window.open first
             if (_origOpen) {
                 try {
                     var w = _origOpen.call(window, url, target, features);
                     if (w) return w;
                 } catch(e) {}
             }
-            // Popup blocked — navigate in-place as fallback
             window.location.href = url;
             return window;
         };
@@ -111,12 +271,12 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
         });
     } catch(e) {}
 
-    // 4. Patch Notification API (some sites check this)
+    // 4. Patch Notification API
     if (!window.Notification) {
         window.Notification = { permission: 'default', requestPermission: function() { return Promise.resolve('default'); } };
     }
 
-    // 5. Override navigator.plugins to look like Safari (not empty like embedded WKWebView)
+    // 5. Override navigator.plugins to look like Safari
     try {
         Object.defineProperty(navigator, 'plugins', {
             get: function() {
@@ -152,49 +312,6 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
             return _origRevokeObjectURL.call(URL, url);
         };
     } catch(e) {}
-
-    // 7. Handle Cmd+R (reload), Cmd+W (close tab), Cmd+N (new tab) in page viewer.
-    //    NSPanel is non-activating so the sidebar keydown listener won't fire here.
-    document.addEventListener('keydown', function(e) {
-        if (e.metaKey && e.key === 'r') {
-            e.preventDefault();
-            location.reload();
-        } else if (e.metaKey && e.key === 'w') {
-            e.preventDefault();
-            // Use Tauri IPC to close this page viewer
-            try {
-                var internals = window.__TAURI_INTERNALS__;
-                if (internals && internals.invoke) {
-                    var label = internals.metadata && internals.metadata.currentWebview
-                        ? internals.metadata.currentWebview.label : '';
-                    if (label) {
-                        internals.invoke('close_page', { pageId: label });
-                    }
-                }
-            } catch(err) { console.log('close_page err', err); }
-        } else if (e.metaKey && e.key === '[') {
-            e.preventDefault();
-            history.back();
-        } else if (e.metaKey && e.key === ']') {
-            e.preventDefault();
-            history.forward();
-        } else if (e.metaKey && e.key === 'n') {
-            e.preventDefault();
-            // Use Tauri IPC to open a new tab for the same destination
-            try {
-                var internals = window.__TAURI_INTERNALS__;
-                if (internals && internals.invoke) {
-                    var label = internals.metadata && internals.metadata.currentWebview
-                        ? internals.metadata.currentWebview.label : '';
-                    if (label) {
-                        // new_tab needs the destination ID, so we use a dedicated command
-                        // that finds the dest from the active page
-                        internals.invoke('new_tab_for_active', {});
-                    }
-                }
-            } catch(err) { console.log('new_tab err', err); }
-        }
-    });
 })();
 "#;
 
@@ -245,7 +362,11 @@ const CLEANUP_SCRIPT: &str = r#"
 })();
 "#;
 
-/// Freeze a background tab: pause media, stop timers/rAF, fake visibilityState=hidden.
+/// Freeze a background tab: pause media, suspend rAF.
+/// IMPORTANT:
+/// - Does NOT kill or intercept timers — preserves streaming connections (Gemini, ChatGPT)
+/// - Does NOT fake visibilityState — faking it causes Gemini to disconnect streams (error 13)
+/// - Moving the window off-screen is the primary "freeze"; this script only handles media/rAF
 const FREEZE_BACKGROUND_SCRIPT: &str = r#"
 (function() {
     if (window.__peeka_frozen) return;
@@ -256,39 +377,15 @@ const FREEZE_BACKGROUND_SCRIPT: &str = r#"
             if (!el.paused) { el.__peeka_was_playing = true; el.pause(); }
         });
     } catch(e) {}
-    // Suspend rAF
+    // Suspend rAF (saves CPU on animations, safe to intercept)
     try {
         window.__peeka_origRAF = window.requestAnimationFrame;
         window.requestAnimationFrame = function() { return 0; };
     } catch(e) {}
-    // Kill timers and neuter timer functions
-    try {
-        window.__peeka_origSetInterval = window.setInterval;
-        window.__peeka_origSetTimeout = window.setTimeout;
-        window.__peeka_origClearInterval = window.clearInterval;
-        window.__peeka_origClearTimeout = window.clearTimeout;
-        var maxId = window.__peeka_origSetTimeout.call(window, function(){}, 0);
-        for (var i = 0; i <= maxId; i++) {
-            window.__peeka_origClearInterval.call(window, i);
-            window.__peeka_origClearTimeout.call(window, i);
-        }
-        window.setInterval = function() { return -1; };
-        window.setTimeout = function() { return -1; };
-    } catch(e) {}
-    // Fake visibility hidden
-    try {
-        Object.defineProperty(document, 'visibilityState', {
-            get: function() { return 'hidden'; }, configurable: true
-        });
-        Object.defineProperty(document, 'hidden', {
-            get: function() { return true; }, configurable: true
-        });
-        document.dispatchEvent(new Event('visibilitychange'));
-    } catch(e) {}
 })();
 "#;
 
-/// Thaw a frozen tab: restore timers, media, animations, visibility.
+/// Thaw a frozen tab: restore rAF, resume media.
 const THAW_FOREGROUND_SCRIPT: &str = r#"
 (function() {
     if (!window.__peeka_frozen) return;
@@ -300,34 +397,11 @@ const THAW_FOREGROUND_SCRIPT: &str = r#"
             delete window.__peeka_origRAF;
         }
     } catch(e) {}
-    // Restore timer functions
-    try {
-        if (window.__peeka_origSetInterval) {
-            window.setInterval = window.__peeka_origSetInterval;
-            window.setTimeout = window.__peeka_origSetTimeout;
-            window.clearInterval = window.__peeka_origClearInterval;
-            window.clearTimeout = window.__peeka_origClearTimeout;
-            delete window.__peeka_origSetInterval;
-            delete window.__peeka_origSetTimeout;
-            delete window.__peeka_origClearInterval;
-            delete window.__peeka_origClearTimeout;
-        }
-    } catch(e) {}
     // Resume media
     try {
         document.querySelectorAll('video, audio').forEach(function(el) {
             if (el.__peeka_was_playing) { el.play().catch(function(){}); delete el.__peeka_was_playing; }
         });
-    } catch(e) {}
-    // Restore visibility
-    try {
-        Object.defineProperty(document, 'visibilityState', {
-            get: function() { return 'visible'; }, configurable: true
-        });
-        Object.defineProperty(document, 'hidden', {
-            get: function() { return false; }, configurable: true
-        });
-        document.dispatchEvent(new Event('visibilitychange'));
     } catch(e) {}
 })();
 "#;
@@ -542,6 +616,7 @@ pub fn create_page_panel(app: &AppHandle, label: &str, url: &str) -> tauri::Resu
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(true)
+        .devtools(true)
         .build()?;
 
     setup_panel(&viewer)?;
@@ -557,17 +632,14 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
 
-    // Hide all other page viewers (move off-screen + hide panel immediately)
-    // Freeze is done ASYNC in a spawned thread so a stuck page can't block us
+    // Hide all other page viewers via order_out (keeps WebView in place so
+    // WebKit doesn't kill network connections like Gemini's streaming channel)
     let mut to_freeze: Vec<String> = Vec::new();
     if let Ok(guard) = ALL_PAGE_LABELS.lock() {
         for other in guard.iter() {
             if other != label {
                 if let Ok(p) = app.get_webview_panel(other) {
                     p.order_out(None);
-                }
-                if let Some(w) = app.get_webview_window(other) {
-                    let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
                 }
                 to_freeze.push(other.clone());
             }
@@ -961,15 +1033,13 @@ pub fn hide_panel(app: &AppHandle) {
         let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
     }
 
-    // Hide all page viewers immediately (move off-screen)
+    // Hide all page viewers via order_out (don't move off-screen —
+    // moving to -9999 causes WebKit to kill streaming connections)
     let mut to_freeze: Vec<String> = Vec::new();
     if let Ok(guard) = ALL_PAGE_LABELS.lock() {
         for label in guard.iter() {
             if let Ok(p) = app.get_webview_panel(label) {
                 p.order_out(None);
-            }
-            if let Some(w) = app.get_webview_window(label) {
-                let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
             }
             to_freeze.push(label.clone());
         }

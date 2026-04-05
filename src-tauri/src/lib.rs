@@ -10,6 +10,30 @@ pub mod webviews;
 
 use tauri::{Emitter, Manager};
 
+/// Disable App Nap so macOS won't throttle our background WKWebView processes.
+/// This prevents SSE streaming connections from being interrupted.
+#[cfg(target_os = "macos")]
+fn disable_app_nap() {
+    use objc::{msg_send, sel, sel_impl};
+    use objc::runtime::Object;
+    unsafe {
+        let cls = objc::runtime::Class::get("NSProcessInfo").unwrap();
+        let info: *mut Object = msg_send![cls, processInfo];
+        // NSActivityUserInitiatedAllowingIdleSystemSleep = 0x00FFFFFFULL
+        // This disables App Nap + sudden termination + automatic termination
+        let reason = {
+            let ns_str_cls = objc::runtime::Class::get("NSString").unwrap();
+            let s = b"Keeping WKWebView SSE connections alive\0";
+            let raw: *mut Object = msg_send![ns_str_cls,
+                stringWithUTF8String: s.as_ptr() as *const std::os::raw::c_char];
+            raw
+        };
+        let options: u64 = 0x00FFFFFF;
+        let _activity: *mut Object = msg_send![info, beginActivityWithOptions: options reason: reason];
+        // We intentionally never call endActivity — keep alive for app lifetime
+    }
+}
+
 use destinations::DestinationManager;
 use hotkeys::shortcut_store::ShortcutStore;
 use webviews::WebViewTabManager;
@@ -50,6 +74,10 @@ pub fn run() {
             {
                 use tauri::ActivationPolicy;
                 app.set_activation_policy(ActivationPolicy::Accessory);
+
+                // Disable App Nap to prevent macOS from throttling WKWebView
+                // network processes, which causes SSE streaming disconnections.
+                disable_app_nap();
             }
 
             // Create the sidebar NSPanel

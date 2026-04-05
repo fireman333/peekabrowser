@@ -1,7 +1,19 @@
 use tauri::{AppHandle, Manager};
+use std::io::Write;
 
 const DOUBLE_TAP_WINDOW_MS: u64 = 500;
 const POLL_MS: u64 = 30;
+
+fn peeka_log(msg: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/peekabrowser.log")
+    {
+        let ts = current_timestamp_ms();
+        let _ = writeln!(f, "[{}] {}", ts, msg);
+    }
+}
 
 pub fn start_double_cmd_c_detector(app: AppHandle) {
     std::thread::spawn(move || {
@@ -28,6 +40,11 @@ fn monitor_pasteboard(app: AppHandle) {
             // Check if clipboard has text FIRST (safe even for file/image clipboard)
             let has_text = pasteboard_has_text();
 
+            peeka_log(&format!(
+                "CB change: count {}→{} jump={} has_text={} time_diff={}ms last_had_text={}",
+                last_count, current_count, jump, has_text, time_diff, last_had_text
+            ));
+
             // Double-copy detected in two ways:
             // 1. Two separate changes within DOUBLE_TAP_WINDOW_MS (normal case)
             // 2. changeCount jumped ≥ 2 in a single poll cycle (both copies
@@ -41,7 +58,7 @@ fn monitor_pasteboard(app: AppHandle) {
             if is_double {
                 let text = get_clipboard_text();
                 if !text.is_empty() {
-                    log::info!("Double-copy detected ({} chars, jump={})", text.len(), jump);
+                    peeka_log(&format!("Double-copy detected ({} chars, jump={})", text.len(), jump));
 
                     // Store text in shared picker state
                     if let Some(state) = app.try_state::<crate::PickerState>() {
@@ -50,12 +67,20 @@ fn monitor_pasteboard(app: AppHandle) {
 
                     // Get cursor pos on background thread (NSEvent mouseLocation is thread-safe)
                     let (cx, cy) = crate::panel::get_cursor_topleft_pos();
+                    peeka_log(&format!("Showing picker at ({}, {})", cx, cy));
 
                     // Show picker on main thread (window ops require main thread)
                     let app2 = app.clone();
-                    let _ = app.run_on_main_thread(move || {
+                    match app.run_on_main_thread(move || {
+                        peeka_log("show_picker main thread callback fired");
                         crate::panel::show_picker(&app2, cx, cy);
-                    });
+                        peeka_log("show_picker done");
+                    }) {
+                        Ok(_) => peeka_log("run_on_main_thread dispatched OK"),
+                        Err(e) => peeka_log(&format!("run_on_main_thread FAILED: {:?}", e)),
+                    }
+                } else {
+                    peeka_log("Double-copy detected but clipboard text is empty");
                 }
             }
 

@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_1.6.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_1.6.0_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_1.7.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_1.7.0_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
    ```bash
@@ -217,7 +217,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_1.6.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_1.6.0_x64.dmg` (Intel)
+1. Open `Peekabrowser_1.7.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_1.7.0_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
    ```bash
@@ -419,6 +419,13 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### 版本紀錄
 
+**v1.7.0 — Gemini 穩定性大幅改善**
+
+- 🔋 **停用 App Nap**：防止 macOS 節流 WKWebView 網路進程，減少 Gemini 等 AI 服務的 SSE streaming 斷線問題
+- 🔄 **智慧自動恢復**：偵測 Gemini 錯誤訊息時自動點擊重試按鈕；轉圈超過 30 秒自動取消卡住的請求
+- 💓 **Keep-alive 機制**：定期輕量 DOM 讀取，保持 WKWebView content process 活躍
+- 🔍 **Debug 日誌**：`⌘C⌘C` 偵測器新增檔案日誌（`/tmp/peekabrowser.log`），方便排查問題
+
 **v1.6.0 — Prompt 前綴、效能優化、側邊欄捲動**
 
 - ✏️ **自訂 Prompt 前綴**：每個 Destination 可設定前綴文字，`⌘C ⌘C` 傳送時自動加在剪貼簿內容前面
@@ -451,6 +458,13 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v1.7.0 — Gemini Stability Improvements**
+
+- 🔋 **Disable App Nap**: Prevents macOS from throttling WKWebView network processes, reducing SSE streaming disconnections for Gemini and other AI services
+- 🔄 **Smart auto-recovery**: Detects Gemini error messages and auto-clicks retry buttons; cancels stuck requests after 30 seconds of spinning
+- 💓 **Keep-alive mechanism**: Periodic lightweight DOM reads keep the WKWebView content process active
+- 🔍 **Debug logging**: `⌘C⌘C` detector now writes to a log file (`/tmp/peekabrowser.log`) for easier troubleshooting
+
 **v1.6.0 — Prompt Prefix, Performance, Sidebar Scroll**
 
 - ✏️ **Custom Prompt Prefix**: Each Destination can have a prefix that auto-prepends to clipboard text when sending via `⌘C ⌘C`
@@ -481,4 +495,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v1.6.0 | Built with [Tauri](https://tauri.app)
+Peekabrowser v1.7.0 | Built with [Tauri](https://tauri.app)
