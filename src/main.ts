@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { applyMaterial, destIcon, hydrateIcons, installFaviconFallback } from "./icons";
+import { initI18n, onLangChange, t } from "./i18n";
 
 interface Destination {
   id: string;
@@ -35,6 +36,11 @@ const statusLive = document.getElementById("status-live")!;
 
 window.addEventListener("DOMContentLoaded", async () => {
   hydrateIcons();
+  await initI18n();
+  onLangChange(() => {
+    renderTabBar();
+    markUpdate(lastUpdate);
+  });
   installFaviconFallback(tabList);
   applyMaterial(invoke);
   await loadDestinations();
@@ -87,12 +93,12 @@ function renderTabBar() {
 function pageLabel(page: PageInfo, idx: number): string {
   const title = page.title?.trim() || `${page.dest_name} #${idx + 1}`;
   const state = page.generating
-    ? "generating"
+    ? t("side.stGenerating")
     : page.state === "unloaded"
-      ? "unloaded — click to restore"
+      ? t("side.stUnloaded")
       : page.id === activePageId
-        ? "current"
-        : "idle";
+        ? t("side.stCurrent")
+        : t("side.stIdle");
   return `${title} (${state})`;
 }
 
@@ -110,7 +116,7 @@ function renderDestItem(dest: Destination) {
 
   btn.dataset.id = dest.id;
   btn.title = dest.name;
-  btn.setAttribute("aria-label", destPages.length ? `${dest.name}, ${destPages.length} page(s)` : dest.name);
+  btn.setAttribute("aria-label", destPages.length ? t("side.pages", { name: dest.name, n: destPages.length }) : dest.name);
   btn.innerHTML = destIcon(dest);
   btn.addEventListener("click", () => {
     if (dest.url.includes("system://calendar")) {
@@ -129,7 +135,7 @@ function renderDestItem(dest: Destination) {
   const pageGroup = document.createElement("div");
   pageGroup.className = "page-group";
   pageGroup.setAttribute("role", "group");
-  pageGroup.setAttribute("aria-label", `${dest.name} pages`);
+  pageGroup.setAttribute("aria-label", t("side.pagesGroup", { name: dest.name }));
   destPages.forEach((page, idx) => {
     const wrap = document.createElement("div");
     wrap.className = "page-dot-wrap";
@@ -164,8 +170,8 @@ function renderDestItem(dest: Destination) {
     const closeBtn = document.createElement("button");
     closeBtn.className = "page-close-btn";
     closeBtn.innerHTML = "×";
-    closeBtn.title = "Close page";
-    closeBtn.setAttribute("aria-label", `Close ${page.title || page.dest_name}`);
+    closeBtn.title = t("side.closePage");
+    closeBtn.setAttribute("aria-label", t("side.closeNamed", { name: page.title || page.dest_name }));
     closeBtn.tabIndex = -1; // Delete on the focused dot closes it from the keyboard
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -229,7 +235,7 @@ function setupEventListeners() {
   on("save-btn", async () => {
     try {
       const r = await invoke<{ capture_status: string }>("save_answer");
-      const msg = r.capture_status === "partial" ? "Saved (still generating)" : "Answer saved";
+      const msg = r.capture_status === "partial" ? t("side.savedPartial") : t("side.saved");
       saveBtn!.title = msg;
       announce(msg);
       flash(saveBtn, "ok");
@@ -239,7 +245,7 @@ function setupEventListeners() {
       announce(msg);
       flash(saveBtn, "error");
     }
-    setTimeout(() => (saveBtn!.title = "Save answer (⌘⇧E)"), 4000);
+    setTimeout(() => (saveBtn!.title = t("side.save")), 4000);
   });
 
   const moreBtn = document.getElementById("more-btn")!;
@@ -297,6 +303,17 @@ function setupEventListeners() {
   });
 }
 
+type UpdateBadge = { info: { available: boolean; latest: string } | null };
+let lastUpdate: UpdateBadge | null = null;
+
+function markUpdate(st: UpdateBadge | null) {
+  lastUpdate = st;
+  const btn = document.getElementById("settings-btn");
+  const available = !!st?.info?.available;
+  btn?.classList.toggle("has-update", available);
+  if (btn) btn.title = available ? t("side.settingsUpdate", { v: st!.info!.latest }) : t("side.settings");
+}
+
 // ─── Tauri event listeners ───────────────────────────────
 function setupTauriListeners() {
   listen("open-settings", () => invoke("open_settings_window").catch(() => {})).catch(() => {});
@@ -314,21 +331,15 @@ function setupTauriListeners() {
   listen("destinations-changed", () => loadDestinations()).catch(() => {});
 
   // Badge the settings button when an update is available.
-  const markUpdate = (st: { info: { available: boolean; latest: string } | null }) => {
-    const btn = document.getElementById("settings-btn");
-    const available = !!st.info?.available;
-    btn?.classList.toggle("has-update", available);
-    if (btn) btn.title = available ? `Settings — version ${st.info!.latest} available` : "Settings";
-  };
-  invoke<{ info: { available: boolean; latest: string } | null }>("get_update_status").then(markUpdate).catch(() => {});
-  listen<{ info: { available: boolean; latest: string } | null }>("update-status", (e) => markUpdate(e.payload)).catch(() => {});
+  invoke<UpdateBadge>("get_update_status").then(markUpdate).catch(() => {});
+  listen<UpdateBadge>("update-status", (e) => markUpdate(e.payload)).catch(() => {});
 
   listen<string>("notice", (event) => {
     announce(event.payload);
     const save = document.getElementById("save-btn");
     if (save) {
       save.title = event.payload;
-      setTimeout(() => (save.title = "Save answer (⌘⇧E)"), 4000);
+      setTimeout(() => (save.title = t("side.save")), 4000);
     }
   }).catch(() => {});
 }

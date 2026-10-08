@@ -4,16 +4,31 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
-pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let toggle = MenuItem::with_id(app, "toggle", "Toggle Sidebar", true, None::<&str>)?;
+use crate::i18n::{tr, trf};
+
+const TRAY_ID: &str = "main-tray";
+
+/// Menu-bar menu in the current interface language.
+fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let toggle = MenuItem::with_id(app, "toggle", tr("顯示／隱藏側邊欄", "Toggle Sidebar"), true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-    let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Peekabrowser", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", tr("設定…", "Settings…"), true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "check-updates", tr("檢查更新…", "Check for Updates…"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tr("結束 Peekabrowser", "Quit Peekabrowser"), true, None::<&str>)?;
+    Menu::with_items(app, &[&toggle, &separator, &settings, &updates, &quit])
+}
 
-    let menu = Menu::with_items(app, &[&toggle, &separator, &settings, &updates, &quit])?;
+/// Rebuild the menu after the interface language changes.
+pub fn refresh_menu(app: &AppHandle) {
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id(TRAY_ID), build_menu(app)) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
 
-    TrayIconBuilder::with_id("main-tray")
+pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    let menu = build_menu(app)?;
+
+    TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Peekabrowser")
         .icon(app.default_window_icon().cloned().unwrap())
         .menu(&menu)
@@ -33,9 +48,13 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = app.clone();
                 std::thread::spawn(move || {
                     let msg = match crate::updater::check(&app) {
-                        Ok(i) if i.available => format!("Peekabrowser {} is available — see Settings to install.", i.latest),
-                        Ok(_) => "Peekabrowser is up to date.".to_string(),
-                        Err(e) => format!("Update check failed: {}", e),
+                        Ok(i) if i.available => trf(
+                            "Peekabrowser {} 已推出 — 請到設定中安裝。",
+                            "Peekabrowser {} is available — see Settings to install.",
+                            &[&i.latest],
+                        ),
+                        Ok(_) => tr("Peekabrowser 已是最新版本。", "Peekabrowser is up to date.").to_string(),
+                        Err(e) => trf("檢查更新失敗：{}", "Update check failed: {}", &[&e]),
                     };
                     crate::lifecycle::notify(&app, &msg);
                 });

@@ -112,7 +112,13 @@ pub fn spawn(app: AppHandle, d: Delivery) {
         if !ok {
             log::warn!("delivery: failed for page {}", d.target.page_id);
             set_status(&app, &d.record_id, "failed");
-            crate::lifecycle::notify(&app, "Couldn't place the query on this page — paste it manually (⌘V).");
+            crate::lifecycle::notify(
+                &app,
+                crate::i18n::tr(
+                    "無法把問題放進這個頁面 — 請手動貼上（⌘V）。",
+                    "Couldn't place the query on this page — paste it manually (⌘V).",
+                ),
+            );
             if let Payload::Text { text } = &d.payload {
                 copy_to_clipboard(&app, &format!("{}{}", d.prompt, text));
             }

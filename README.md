@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_2.0.1_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.1_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_2.0.2_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.2_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
    ```bash
@@ -155,7 +155,7 @@ Peekabrowser 支援多螢幕環境。側邊欄會出現在滑鼠所在的螢幕�
 
 每個 Destination 可設定 Prompt 前綴，透過 `⌘C ⌘C` 傳送文字時會自動加在前面。例如設定前綴為「請翻譯以下文字為英文：」，複製任何文字後傳送到 Gemini 就會自動帶上翻譯指令。
 
-設定方式：⚙ 設定 → 編輯 Destination → Prompt prefix 欄位
+設定方式：⚙ 設定 → 編輯目的地 → 「提示詞前綴」欄位
 
 **新增分頁與預設瀏覽器開啟 (v1.2.0)**
 
@@ -169,15 +169,20 @@ Peekabrowser 支援多螢幕環境。側邊欄會出現在滑鼠所在的螢幕�
 
 **管理 Destination**
 
-- **新增：** 點擊「+ Add Destination」，從預設列表選擇或點「+ Custom」自行填入名稱和 URL
+- **新增：** 點擊「＋ 新增目的地」，從快速選擇列表挑選或點「＋ 自訂」自行填入名稱和網址
 - **編輯：** 點擊 Destination 右側的 ✎ 按鈕，可修改名稱、URL 和圖示
 - **刪除：** 點擊 Destination 右側的 ✕ 按鈕
 - **排序：** 點擊 ↑↓ 按鈕調整順序
 
 **圖示設定**
 
-- **自動抓取網站圖示：** Icon (emoji) 欄位留空時，會自動顯示該網站的 favicon
-- **自訂 emoji：** 在 Icon (emoji) 欄位輸入 emoji，即可使用自訂圖示
+- **自動抓取網站圖示：** 「圖示（emoji）」欄位留空時，會自動顯示該網站的 favicon
+- **自訂 emoji：** 在「圖示（emoji）」欄位輸入 emoji，即可使用自訂圖示
+
+**一般 (v2.0.2)**
+
+- **介面語言：** 預設為繁體中文，可切換為 English；設定視窗、⌘C⌘C 選單、紀錄視窗、側邊欄提示、選單列與通知會即時切換並在重開後保留。
+- **登入時自動啟動：** 開啟後登入 macOS 會自動在背景啟動 Peekabrowser（使用者層級的 LaunchAgent，`~/Library/LaunchAgents/Peekabrowser.plist`）。開關會讀取系統的實際狀態。
 
 ### 資料儲存
 
@@ -187,7 +192,7 @@ Peekabrowser 支援多螢幕環境。側邊欄會出現在滑鼠所在的螢幕�
 ~/Library/Application Support/com.peekabrowser.app/
 ├── destinations.json    # Destination 列表
 ├── shortcuts.json       # 快捷鍵設定
-├── settings.json        # 省電／外觀設定
+├── settings.json        # 省電／外觀／語言設定
 ├── records.sqlite       # 查詢與保存的回答
 └── attachments/         # 查詢用的截圖
 ```
@@ -204,7 +209,7 @@ Peekabrowser 支援多螢幕環境。側邊欄會出現在滑鼠所在的螢幕�
 
 ### 更新
 
-Peekabrowser 會在啟動時與每天檢查新版本（可在設定關閉）。到 **設定 → 更新** 按「安裝並重新啟動」即可更新；也可勾選「自動安裝更新」。選單列圖示的選單中也有 **Check for Updates…**。App 需放在「應用程式」等可寫入的資料夾才能自動更新。
+Peekabrowser 會在啟動時與每天檢查新版本（可在設定關閉）。到 **設定 → 更新** 按「安裝並重新啟動」即可更新；也可勾選「自動安裝更新」。選單列圖示的選單中也有 **檢查更新…**（英文介面為 Check for Updates…）。App 需放在「應用程式」等可寫入的資料夾才能自動更新。
 
 ### 退出
 
@@ -232,7 +237,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_2.0.1_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.1_x64.dmg` (Intel)
+1. Open `Peekabrowser_2.0.2_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.2_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
    ```bash
@@ -390,7 +395,7 @@ Click the ⚙ button at the bottom of the sidebar to open Settings.
 
 **Managing Destinations**
 
-- **Add:** Click "+ Add Destination", choose from presets or click "+ Custom" to enter a name and URL manually
+- **Add:** Click "+ Add Destination", choose from presets or click "+ Custom" to enter a name and URL manually (labels shown with the interface language set to English)
 - **Edit:** Click the ✎ button next to a Destination to modify its name, URL, or icon
 - **Delete:** Click the ✕ button next to a Destination
 - **Reorder:** Click the ↑↓ buttons to change the order
@@ -400,6 +405,11 @@ Click the ⚙ button at the bottom of the sidebar to open Settings.
 - **Auto favicon:** Leave the Icon (emoji) field empty to automatically display the website's favicon
 - **Custom emoji:** Enter any emoji in the Icon field to use it as the icon
 
+**General (v2.0.2)**
+
+- **Language:** Traditional Chinese by default, with an English option. Settings, the ⌘C⌘C menu, Records, sidebar tooltips, the menu-bar menu and notifications switch immediately and the choice is kept across restarts.
+- **Launch at login:** starts Peekabrowser in the background when you log in (a per-user LaunchAgent, `~/Library/LaunchAgents/Peekabrowser.plist`). The switch reflects the actual system state.
+
 ### Data Storage
 
 All settings are stored locally on your machine:
@@ -408,7 +418,7 @@ All settings are stored locally on your machine:
 ~/Library/Application Support/com.peekabrowser.app/
 ├── destinations.json    # Destination list
 ├── shortcuts.json       # Keyboard shortcut config
-├── settings.json        # Power / appearance settings
+├── settings.json        # Power / appearance / language settings
 ├── records.sqlite       # Queries and saved answers
 └── attachments/         # Screenshots used in queries
 ```

@@ -1,141 +1,178 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant-TW">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light dark" />
-  <title>Peekabrowser Settings</title>
+  <title>Peekabrowser</title>
   <link rel="stylesheet" href="/src/settings.css" />
   <script type="module" src="/src/settings.ts" defer></script>
 </head>
 <body>
   <div id="settings-app">
-    <h1>Settings</h1>
+    <h1 data-i18n="settings.title"></h1>
 
-    <section>
-      <h2>Destinations</h2>
-      <p class="hint">Manage your search engines and AI destinations. Drag to reorder.</p>
+    <!-- Destinations -->
+    <section class="group">
+      <h2 data-i18n="dest.section"></h2>
+      <p class="hint" data-i18n="dest.hint"></p>
       <div id="destinations-list"></div>
-      <button id="add-btn" class="btn-secondary">+ Add Destination</button>
-    </section>
+      <button id="add-btn" class="btn-secondary" data-i18n="dest.add"></button>
 
-    <div id="add-form" class="hidden">
-      <h2>Add Destination</h2>
-      <div id="preset-chips"></div>
-      <div class="form-group">
-        <label>Name</label>
-        <input id="new-name" type="text" placeholder="Enter name" />
-      </div>
-      <div class="form-group">
-        <label>URL</label>
-        <input id="new-url" type="text" placeholder="Paste URL" />
-      </div>
-      <div class="form-group">
-        <label>Icon (emoji)</label>
-        <input id="new-icon" type="text" placeholder="Leave empty to use website icon" maxlength="2" />
-      </div>
-      <div class="form-group">
-        <label>Prompt prefix（自動加在複製文字前面）</label>
-        <textarea id="new-clip-prompt" rows="2" placeholder="例：請翻譯以下文字為英文：&#10;"></textarea>
-      </div>
-      <div class="form-actions">
-        <button id="save-btn" class="btn-primary">Save</button>
-        <button id="cancel-btn" class="btn-secondary">Cancel</button>
-      </div>
-    </div>
-
-    <section class="power-section">
-      <h2>⌘C ⌘C</h2>
-      <label class="toggle-row">
-        <input type="checkbox" id="opt-auto-first" />
-        <span>
-          <strong>預設用第一個 Destination 開啟</strong>
-          <small>勾選後，⌘C ⌘C 直接傳送到清單中的第一個 Destination，不再顯示選單。未勾選時，可在選單中按 C / V / B / N / M 快速選擇前五個（注音等輸入法下也可用）。</small>
-        </span>
-      </label>
-    </section>
-
-    <section class="power-section">
-      <h2>Power &amp; appearance</h2>
-      <label class="toggle-row">
-        <input type="checkbox" id="opt-edge-hover" />
-        <span>
-          <strong>Show sidebar at the left screen edge</strong>
-          <small>Off: no global mouse monitoring while hidden. ⌘⇧A and the menu-bar icon still work.</small>
-        </span>
-      </label>
-      <label class="toggle-row">
-        <input type="checkbox" id="opt-material" />
-        <span>
-          <strong>Native window material</strong>
-          <small>Liquid Glass on macOS 26+, vibrancy on macOS 13–15. Off: solid colors. Applies after restart.</small>
-        </span>
-      </label>
-      <label class="toggle-row">
-        <span>
-          <strong>Unload hidden pages after</strong>
-          <small>Unloaded pages keep their title and URL and reload when clicked. Pages that are generating or have an unsent draft are kept.</small>
-        </span>
-        <select id="opt-unload">
-          <option value="120">2 min</option>
-          <option value="300">5 min</option>
-          <option value="600">10 min</option>
-          <option value="1800">30 min</option>
-        </select>
-      </label>
-      <p class="hint" id="diagnostics"></p>
-    </section>
-
-    <section class="update-section">
-      <h2>更新 · Updates</h2>
-      <div class="update-row">
-        <div>
-          <strong>Peekabrowser <span id="app-version"></span></strong>
-          <small id="update-message">—</small>
+      <div id="add-form" class="card hidden">
+        <h3 id="form-title" data-i18n="dest.addTitle"></h3>
+        <div class="form-group">
+          <span class="field-label" data-i18n="dest.presets"></span>
+          <div id="preset-chips"></div>
         </div>
-        <div class="update-actions">
-          <button id="update-check" class="btn-secondary">檢查更新</button>
-          <button id="update-install" class="btn-primary hidden">安裝並重新啟動</button>
+        <div class="form-group">
+          <label for="new-name" data-i18n="dest.name"></label>
+          <input id="new-name" type="text" data-i18n-placeholder="dest.namePh" />
+        </div>
+        <div class="form-group">
+          <label for="new-url" data-i18n="dest.url"></label>
+          <input id="new-url" type="text" data-i18n-placeholder="dest.urlPh" />
+        </div>
+        <div class="form-group">
+          <label for="new-icon" data-i18n="dest.icon"></label>
+          <input id="new-icon" type="text" data-i18n-placeholder="dest.iconPh" maxlength="2" />
+        </div>
+        <div class="form-group">
+          <label for="new-clip-prompt"><span data-i18n="dest.prompt"></span> <small class="label-help" data-i18n="dest.promptHelp"></small></label>
+          <textarea id="new-clip-prompt" rows="2" data-i18n-placeholder="dest.promptPh"></textarea>
+        </div>
+        <div class="form-actions">
+          <button id="save-btn" class="btn-primary" data-i18n="common.save"></button>
+          <button id="cancel-btn" class="btn-secondary" data-i18n="common.cancel"></button>
         </div>
       </div>
-      <details id="update-notes" class="hidden"><summary>這個版本的新功能</summary><pre id="update-notes-body"></pre></details>
-      <label class="toggle-row">
-        <input type="checkbox" id="opt-auto-check" />
-        <span>
-          <strong>自動檢查更新</strong>
-          <small>啟動時與每天檢查一次 GitHub Releases。</small>
-        </span>
-      </label>
-      <label class="toggle-row">
-        <input type="checkbox" id="opt-auto-install" />
-        <span>
-          <strong>自動安裝更新</strong>
-          <small>找到新版本時自動下載、驗證並重新啟動（只在側邊欄隱藏且沒有正在生成的回答時進行）。未勾選時只會通知。</small>
-        </span>
-      </label>
     </section>
 
-    <section class="shortcuts-section">
-      <h2>Keyboard Shortcuts</h2>
-      <p class="hint">Click on a shortcut to change it, then press a new key combination.</p>
+    <!-- ⌘C ⌘C -->
+    <section class="group">
+      <h2 data-i18n="copy.section"></h2>
+      <div class="card list">
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="copy.autoFirst"></strong>
+            <small data-i18n="copy.autoFirstHelp"></small>
+          </span>
+          <input type="checkbox" class="switch" id="opt-auto-first" />
+        </label>
+      </div>
+    </section>
 
-      <div class="shortcut-row" data-action="toggle_sidebar">
-        <kbd class="shortcut-key" tabindex="0"></kbd>
-        <span>Toggle sidebar</span>
+    <!-- Appearance & power -->
+    <section class="group">
+      <h2 data-i18n="power.section"></h2>
+      <div class="card list">
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="power.edge"></strong>
+            <small data-i18n="power.edgeHelp"></small>
+          </span>
+          <input type="checkbox" class="switch" id="opt-edge-hover" />
+        </label>
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="power.material"></strong>
+            <small data-i18n="power.materialHelp"></small>
+          </span>
+          <input type="checkbox" class="switch" id="opt-material" />
+        </label>
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="power.unload"></strong>
+            <small data-i18n="power.unloadHelp"></small>
+          </span>
+          <select id="opt-unload">
+            <option value="120" data-min="2"></option>
+            <option value="300" data-min="5"></option>
+            <option value="600" data-min="10"></option>
+            <option value="1800" data-min="30"></option>
+          </select>
+        </label>
       </div>
-      <div class="shortcut-row" data-action="screenshot">
-        <kbd class="shortcut-key" tabindex="0"></kbd>
-        <span>Screenshot to AI</span>
-      </div>
-      <div class="shortcut-row" data-action="export">
-        <kbd class="shortcut-key" tabindex="0"></kbd>
-        <span>Save answer from the current page</span>
-      </div>
+      <p class="hint footnote" id="diagnostics"></p>
+    </section>
 
-      <div class="shortcut-divider"></div>
-      <div class="shortcut-row fixed-row"><kbd>⌘C ⌘C</kbd> <span>Quick send clipboard</span></div>
-      <div class="shortcut-row fixed-row"><kbd>⌘R</kbd> <span>Reload active page</span></div>
-      <div class="shortcut-row fixed-row"><kbd>⌘W</kbd> <span>Close active tab</span></div>
+    <!-- Shortcuts -->
+    <section class="group shortcuts-section">
+      <h2 data-i18n="keys.section"></h2>
+      <p class="hint" data-i18n="keys.hint"></p>
+      <div class="card list">
+        <div class="shortcut-row" data-action="toggle_sidebar">
+          <span data-i18n="keys.toggle"></span>
+          <kbd class="shortcut-key" tabindex="0"></kbd>
+        </div>
+        <div class="shortcut-row" data-action="screenshot">
+          <span data-i18n="keys.screenshot"></span>
+          <kbd class="shortcut-key" tabindex="0"></kbd>
+        </div>
+        <div class="shortcut-row" data-action="export">
+          <span data-i18n="keys.export"></span>
+          <kbd class="shortcut-key" tabindex="0"></kbd>
+        </div>
+        <div class="shortcut-row fixed-row"><span data-i18n="keys.copy"></span><kbd>⌘C ⌘C</kbd></div>
+        <div class="shortcut-row fixed-row"><span data-i18n="keys.reload"></span><kbd>⌘R</kbd></div>
+        <div class="shortcut-row fixed-row"><span data-i18n="keys.close"></span><kbd>⌘W</kbd></div>
+      </div>
+    </section>
+
+    <!-- Updates -->
+    <section class="group update-section">
+      <h2 data-i18n="upd.section"></h2>
+      <div class="card list">
+        <div class="row update-row">
+          <span class="row-text">
+            <strong>Peekabrowser <span id="app-version"></span></strong>
+            <small id="update-message">—</small>
+          </span>
+          <div class="update-actions">
+            <button id="update-check" class="btn-secondary" data-i18n="upd.check"></button>
+            <button id="update-install" class="btn-primary hidden" data-i18n="upd.install"></button>
+          </div>
+        </div>
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="upd.autoCheck"></strong>
+            <small data-i18n="upd.autoCheckHelp"></small>
+          </span>
+          <input type="checkbox" class="switch" id="opt-auto-check" />
+        </label>
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="upd.autoInstall"></strong>
+            <small data-i18n="upd.autoInstallHelp"></small>
+          </span>
+          <input type="checkbox" class="switch" id="opt-auto-install" />
+        </label>
+      </div>
+      <details id="update-notes" class="hidden"><summary data-i18n="upd.notes"></summary><pre id="update-notes-body"></pre></details>
+    </section>
+
+    <!-- General -->
+    <section class="group">
+      <h2 data-i18n="gen.section"></h2>
+      <div class="card list">
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="gen.language"></strong>
+            <small data-i18n="gen.languageHelp"></small>
+          </span>
+          <select id="opt-language">
+            <option value="zh-TW">繁體中文</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <label class="row">
+          <span class="row-text">
+            <strong data-i18n="gen.autostart"></strong>
+            <small data-i18n="gen.autostartHelp"></small>
+          </span>
+          <input type="checkbox" class="switch" id="opt-autostart" />
+        </label>
+      </div>
     </section>
   </div>
 </body>

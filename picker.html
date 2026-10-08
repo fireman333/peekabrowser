@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant-TW">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,12 +10,12 @@
 <body>
   <div id="picker-card" role="dialog" aria-labelledby="picker-title">
     <div id="picker-header">
-      <span id="picker-title">Send to…</span>
-      <button id="picker-close" data-icon="close" aria-label="Dismiss (Esc)" title="Dismiss (Esc)"></button>
+      <span id="picker-title" data-i18n="picker.sendTo"></span>
+      <button id="picker-close" data-icon="close" data-i18n-aria="picker.dismiss" data-i18n-title="picker.dismiss"></button>
     </div>
     <div id="picker-preview" aria-live="polite"></div>
-    <div id="picker-list" role="listbox" aria-label="Destinations"></div>
-    <div id="picker-hint">C V B N M 快速選擇 · Esc 關閉</div>
+    <div id="picker-list" role="listbox" data-i18n-aria="picker.listLabel"></div>
+    <div id="picker-hint" data-i18n="picker.hint"></div>
   </div>
 </body>
 </html>

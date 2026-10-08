@@ -71,6 +71,8 @@ fn emit_now(app: &AppHandle) {
 
 /// Short, recoverable status message: in the sidebar, or as a system
 /// notification when the panel is hidden (e.g. ⌘⇧E from another app).
+/// Show `msg` in the sidebar (and as a macOS notification while it is hidden).
+/// Callers pass text already localized via `crate::i18n`.
 pub fn notify(app: &AppHandle, msg: &str) {
     if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
         let _ = sidebar.emit("notice", msg);

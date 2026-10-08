@@ -4,6 +4,7 @@ pub mod commands;
 pub mod delivery;
 pub mod destinations;
 pub mod hotkeys;
+pub mod i18n;
 pub mod lifecycle;
 pub mod native;
 pub mod panel;
@@ -46,6 +47,11 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        // Launch at login via a per-user LaunchAgent (works for ad-hoc signed builds).
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(DestinationManager::new(app_data_dir.clone()))
         .manage(ShortcutStore::new(app_data_dir.clone()))
         .manage(app_settings::AppSettingsStore::new(app_data_dir.clone()))
@@ -54,6 +60,9 @@ pub fn run() {
         .manage(commands::SystemConfigState::new())
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // Interface language for menu bar, notifications and window titles.
+            i18n::set_language(&app.state::<app_settings::AppSettingsStore>().get().language);
 
             // Set as accessory app (no dock icon)
             #[cfg(target_os = "macos")]
@@ -89,6 +98,21 @@ pub fn run() {
 
             // Start edge hover detector
             panel::hover_detector::start_hover_detector(handle.clone());
+
+            // Launch at login: the LaunchAgent stores the executable path, so rewrite it
+            // after the app was moved/updated (skipped when running from a DMG or translocated).
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let launcher = handle.autolaunch();
+                let installed = std::env::current_exe()
+                    .map(|exe| updater::bundle_path_for(&exe).is_ok())
+                    .unwrap_or(false);
+                if installed && launcher.is_enabled().unwrap_or(false) {
+                    if let Err(e) = launcher.enable() {
+                        log::warn!("autostart: refresh failed: {}", e);
+                    }
+                }
+            }
 
             // Update checks: once shortly after launch, then daily (if enabled)
             updater::start_background_checks(handle.clone());
@@ -146,6 +170,8 @@ pub fn run() {
             commands::open_records_window,
             commands::get_app_settings,
             commands::save_app_settings,
+            commands::get_autostart,
+            commands::set_autostart,
             commands::get_diagnostics,
             commands::get_material_kind,
             commands::get_app_version,
