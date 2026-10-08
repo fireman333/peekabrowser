@@ -313,6 +313,16 @@ function setupTauriListeners() {
 
   listen("destinations-changed", () => loadDestinations()).catch(() => {});
 
+  // Badge the settings button when an update is available.
+  const markUpdate = (st: { info: { available: boolean; latest: string } | null }) => {
+    const btn = document.getElementById("settings-btn");
+    const available = !!st.info?.available;
+    btn?.classList.toggle("has-update", available);
+    if (btn) btn.title = available ? `Settings — version ${st.info!.latest} available` : "Settings";
+  };
+  invoke<{ info: { available: boolean; latest: string } | null }>("get_update_status").then(markUpdate).catch(() => {});
+  listen<{ info: { available: boolean; latest: string } | null }>("update-status", (e) => markUpdate(e.payload)).catch(() => {});
+
   listen<string>("notice", (event) => {
     announce(event.payload);
     const save = document.getElementById("save-btn");

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 interface Destination {
   id: string;
@@ -49,6 +50,60 @@ interface AppSettings {
   edge_hover_enabled: boolean;
   native_material: boolean;
   background_unload_secs: number;
+  auto_send_first: boolean;
+  auto_check_updates: boolean;
+  auto_install_updates: boolean;
+}
+
+interface UpdateInfo {
+  current: string;
+  latest: string;
+  available: boolean;
+  notes: string;
+  page_url: string;
+}
+
+interface UpdateStatus {
+  state: string;
+  message: string;
+  info: UpdateInfo | null;
+}
+
+function renderUpdate(st: UpdateStatus) {
+  const msg = document.getElementById("update-message")!;
+  const install = document.getElementById("update-install")!;
+  const check = document.getElementById("update-check") as HTMLButtonElement;
+  const notes = document.getElementById("update-notes")!;
+  const busy = ["checking", "downloading", "installing"].includes(st.state);
+  msg.textContent = st.message || (st.state === "idle" ? "尚未檢查" : st.state);
+  msg.className = st.state === "error" ? "error" : st.state === "available" ? "available" : "";
+  check.disabled = busy;
+  const available = !!st.info?.available && !busy;
+  install.classList.toggle("hidden", !available);
+  if (st.info?.available && st.info.notes) {
+    notes.classList.remove("hidden");
+    document.getElementById("update-notes-body")!.textContent = st.info.notes;
+  } else {
+    notes.classList.add("hidden");
+  }
+}
+
+async function setupUpdates() {
+  try {
+    document.getElementById("app-version")!.textContent = "v" + (await invoke<string>("get_app_version"));
+    renderUpdate(await invoke<UpdateStatus>("get_update_status"));
+  } catch (_e) {}
+  listen<UpdateStatus>("update-status", (e) => renderUpdate(e.payload)).catch(() => {});
+  document.getElementById("update-check")!.addEventListener("click", async () => {
+    try { await invoke("check_for_updates"); } catch (_e) { /* status event shows the error */ }
+  });
+  document.getElementById("update-install")!.addEventListener("click", async () => {
+    try {
+      await invoke("install_update");
+    } catch (e) {
+      if (confirm(`${e}\n\n要改到下載頁面手動更新嗎？`)) invoke("open_release_page").catch(() => {});
+    }
+  });
 }
 
 interface Diagnostics {
@@ -63,6 +118,9 @@ async function setupPowerSettings() {
   const edge = document.getElementById("opt-edge-hover") as HTMLInputElement;
   const material = document.getElementById("opt-material") as HTMLInputElement;
   const unload = document.getElementById("opt-unload") as HTMLSelectElement;
+  const autoFirst = document.getElementById("opt-auto-first") as HTMLInputElement;
+  const autoCheck = document.getElementById("opt-auto-check") as HTMLInputElement;
+  const autoInstall = document.getElementById("opt-auto-install") as HTMLInputElement;
   let current: AppSettings;
   try {
     current = await invoke<AppSettings>("get_app_settings");
@@ -71,6 +129,10 @@ async function setupPowerSettings() {
   }
   edge.checked = current.edge_hover_enabled;
   material.checked = current.native_material;
+  autoFirst.checked = current.auto_send_first;
+  autoCheck.checked = current.auto_check_updates;
+  autoInstall.checked = current.auto_install_updates;
+  autoInstall.disabled = !autoCheck.checked;
   unload.value = String(current.background_unload_secs);
   if (!unload.value) unload.value = "300";
   const save = async () => {
@@ -78,12 +140,19 @@ async function setupPowerSettings() {
       edge_hover_enabled: edge.checked,
       native_material: material.checked,
       background_unload_secs: Number(unload.value) || 300,
+      auto_send_first: autoFirst.checked,
+      auto_check_updates: autoCheck.checked,
+      auto_install_updates: autoInstall.checked,
     };
+    autoInstall.disabled = !autoCheck.checked;
     try { await invoke("save_app_settings", { settings: current }); } catch (_e) {}
   };
   edge.addEventListener("change", save);
   material.addEventListener("change", save);
   unload.addEventListener("change", save);
+  autoFirst.addEventListener("change", save);
+  autoCheck.addEventListener("change", save);
+  autoInstall.addEventListener("change", save);
 
   const diag = document.getElementById("diagnostics")!;
   const refresh = async () => {
@@ -102,6 +171,7 @@ async function setupPowerSettings() {
 
 window.addEventListener("DOMContentLoaded", async () => {
   setupPowerSettings();
+  setupUpdates();
   await loadDestinations();
   await loadShortcuts();
   renderPresets();

@@ -639,13 +639,28 @@ pub fn ocr_image(path: &std::path::Path) -> Result<String, String> {
 /// The payload comes from the pending query captured at trigger time; `text`
 /// is accepted for compatibility but a typed payload is preferred.
 #[tauri::command]
-pub fn pick_destination(
-    app: AppHandle,
-    dest_manager: State<DestinationManager>,
-    picker_state: State<PickerState>,
-    id: String,
-    text: Option<String>,
-) -> Result<(), String> {
+pub fn pick_destination(app: AppHandle, id: String, text: Option<String>) -> Result<(), String> {
+    pick_destination_impl(&app, &id, text)
+}
+
+/// Pick the n-th destination in picker order (keyboard shortcut / auto-send).
+pub fn pick_destination_by_index(app: &AppHandle, index: usize) -> Result<(), String> {
+    let id = app
+        .state::<DestinationManager>()
+        .get_all()
+        .get(index)
+        .map(|d| d.id.clone())
+        .ok_or("No destination at that position")?;
+    pick_destination_impl(app, &id, None)
+}
+
+/// Shared by the picker click, its keyboard shortcuts and auto-send.
+/// Must run on the main thread (creates/positions windows).
+pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) -> Result<(), String> {
+    let app = app.clone();
+    let id = id.to_string();
+    let dest_manager = app.state::<DestinationManager>();
+    let picker_state = app.state::<PickerState>();
     crate::panel::hide_picker(&app);
 
     let dest = dest_manager
@@ -1115,4 +1130,41 @@ pub fn get_diagnostics(tab_manager: State<std::sync::Mutex<WebViewTabManager>>) 
 #[tauri::command]
 pub fn get_material_kind() -> String {
     crate::panel::MATERIAL_KIND.lock().map(|g| g.to_string()).unwrap_or_default()
+}
+
+// ─── Updates ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+pub fn get_update_status() -> crate::updater::UpdateStatus {
+    crate::updater::status()
+}
+
+#[tauri::command]
+pub async fn check_for_updates(app: AppHandle) -> Result<crate::updater::UpdateInfo, String> {
+    crate::updater::check(&app).map_err(|e| {
+        log::warn!("updater: {}", e);
+        e
+    })
+}
+
+/// Downloads, verifies and installs; the app quits and relaunches on success.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    crate::updater::install(&app)
+}
+
+#[tauri::command]
+pub fn open_release_page() -> Result<(), String> {
+    let url = crate::updater::status()
+        .info
+        .map(|i| i.page_url)
+        .filter(|u| u.starts_with("https://github.com/"))
+        .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", crate::updater::REPO));
+    std::process::Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
 }

@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_1.8.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_1.8.0_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_2.0.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.0_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
    ```bash
@@ -87,6 +87,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 | `⌘⇧S` | 螢幕截圖並傳送給 AI |
 | `⌘C` `⌘C` | 快速複製兩次，選擇要傳送到哪個 Destination |
 | `⌘⇧E` | 保存目前頁面的 AI 回答到「紀錄」（有選取文字時只保存選取內容） |
+| `C` `V` `B` `N` `M` | 在 `⌘C ⌘C` 選單中快速選擇前五個 Destination（注音等輸入法下也可用），`Esc` 關閉 |
 
 **側邊欄內快捷鍵**
 
@@ -201,6 +202,10 @@ Peekabrowser 支援多螢幕環境。側邊欄會出現在滑鼠所在的螢幕�
 - **省電：** 隱藏時不輪詢滑鼠與剪貼簿；只有正在生成的回答會讓 App 保持活躍。背景頁面閒置一段時間（預設 5 分鐘）會卸載但保留在列表中，點一下即可恢復。設定中可關閉「左緣顯示」與原生材質。
 - **輔助使用（選用）：** 在「系統設定 → 隱私與安全性 → 輔助使用」允許 Peekabrowser 後，`⌘C⌘C` 改由按鍵事件觸發，待機更省電。
 
+### 更新
+
+Peekabrowser 會在啟動時與每天檢查新版本（可在設定關閉）。到 **設定 → 更新** 按「安裝並重新啟動」即可更新；也可勾選「自動安裝更新」。選單列圖示的選單中也有 **Check for Updates…**。App 需放在「應用程式」等可寫入的資料夾才能自動更新。
+
 ### 退出
 
 右鍵點擊選單列上的 Peekabrowser 圖示，選擇 **Quit Peekabrowser**。
@@ -227,7 +232,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_1.8.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_1.8.0_x64.dmg` (Intel)
+1. Open `Peekabrowser_2.0.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.0_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
    ```bash
@@ -303,6 +308,7 @@ Three buttons at the bottom of the sidebar (S / M / L):
 | `⌘⇧S` | Screenshot and send to AI |
 | `⌘C` `⌘C` | Quick-send clipboard to a Destination |
 | `⌘⇧E` | Save the current page's AI answer to Records (or just the selection, if any) |
+| `C` `V` `B` `N` `M` | In the `⌘C ⌘C` picker, pick the first five destinations (works with any input method); `Esc` dismisses |
 
 **In-sidebar Shortcuts**
 
@@ -417,6 +423,10 @@ All settings are stored locally on your machine:
 - **Power:** no mouse or clipboard polling while hidden; only a generating answer keeps the app awake. Background pages unload after an idle period (default 5 min) but stay listed and restore on click. Edge reveal and native material can be turned off in Settings.
 - **Accessibility (optional):** allow Peekabrowser under System Settings → Privacy & Security → Accessibility to make `⌘C⌘C` key-triggered (lower idle cost).
 
+### Updates
+
+Peekabrowser checks for new versions at launch and daily (can be turned off). Install from **Settings → Updates** with one click, or enable automatic installation. The menu-bar menu also has **Check for Updates…**. The app must live in a writable folder such as Applications to update itself.
+
 ### Quitting
 
 Right-click the Peekabrowser icon in the Menu Bar and select **Quit Peekabrowser**.
@@ -438,6 +448,14 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 ---
 
 ### 版本紀錄
+
+**v2.0.0 — 自動更新、選單快捷鍵、一鍵傳送、圓角外觀**
+
+- 🔄 自動檢查／安裝更新：比對 SHA-256 後替換並重新啟動，設定與登入保留（從 v1.8.0 升級需手動安裝一次）
+- ⌨️ `⌘C ⌘C` 選單可按 C / V / B / N / M 選擇前五個 Destination，非英文輸入法下也能用
+- ⚡ 新設定「預設用第一個 Destination 開啟」：`⌘C ⌘C` 直接傳送，不顯示選單
+- 🔲 側邊欄、網頁視窗與選單改為連續曲線圓角，貼合新版 macOS 視窗
+
 
 **v1.8.0 — 低耗能、可靠傳送、回答紀錄**
 
@@ -487,6 +505,14 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v2.0.0 — Auto-update, picker shortcuts, one-step send, rounded corners**
+
+- 🔄 Automatic update check/install, verified by SHA-256, settings and logins kept (one manual install needed from v1.8.0)
+- ⌨️ C / V / B / N / M pick the first five destinations in the `⌘C ⌘C` picker, with any input method
+- ⚡ New setting: send `⌘C ⌘C` straight to the first destination
+- 🔲 Continuous-curve rounded corners on the sidebar, viewer and picker
+
+
 **v1.8.0 — Low power, reliable delivery, saved answers**
 
 - 🔋 No app-lifetime App Nap opt-out; activity token only while generating; 16 ms mouse and 30 ms clipboard polling removed
@@ -533,4 +559,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v1.8.0 | Built with [Tauri](https://tauri.app)
+Peekabrowser v2.0.0 | Built with [Tauri](https://tauri.app)

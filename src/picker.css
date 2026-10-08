@@ -33,7 +33,7 @@ html, body {
 #picker-card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
   padding: 6px;
   height: 100vh;
@@ -121,7 +121,7 @@ html, body {
   color: var(--text);
   cursor: pointer;
   padding: 7px 8px;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 13px;
   text-align: left;
 }

@@ -8,9 +8,11 @@ pub mod lifecycle;
 pub mod native;
 pub mod panel;
 pub mod permissions;
+pub mod picker_keys;
 pub mod records;
 pub mod screenshot;
 pub mod tray;
+pub mod updater;
 pub mod webviews;
 
 use tauri::Manager;
@@ -75,6 +77,7 @@ pub fn run() {
 
             // Create the floating destination picker popup
             panel::create_picker_panel(&handle)?;
+            picker_keys::install(&handle);
 
             // Setup system tray
             tray::setup_tray(&handle)?;
@@ -86,6 +89,9 @@ pub fn run() {
 
             // Start edge hover detector
             panel::hover_detector::start_hover_detector(handle.clone());
+
+            // Update checks: once shortly after launch, then daily (if enabled)
+            updater::start_background_checks(handle.clone());
 
             // Start double-copy detector
             hotkeys::double_cmd_c::start_double_cmd_c_detector(handle.clone());
@@ -142,6 +148,11 @@ pub fn run() {
             commands::save_app_settings,
             commands::get_diagnostics,
             commands::get_material_kind,
+            commands::get_app_version,
+            commands::get_update_status,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::open_release_page,
         ])
         // Prevent page panel window close from exiting the app.
         // Settings window is allowed to close normally.

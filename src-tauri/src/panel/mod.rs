@@ -246,6 +246,23 @@ fn get_height_ratio() -> f64 {
 }
 
 pub const SIDEBAR_LABEL: &str = "sidebar";
+
+/// Corner radius matching recent macOS window corners (continuous curve).
+/// Sidebar + viewer read as one rounded panel; the picker is rounded all round.
+pub const PANEL_CORNER_RADIUS: f64 = 18.0;
+pub const PICKER_CORNER_RADIUS: f64 = 16.0;
+
+/// Sidebar alone → all corners; with a viewer beside it → only its left corners.
+pub fn update_sidebar_corners(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(SIDEBAR_LABEL) {
+        let mask = if get_active_page_label().is_some() {
+            crate::native::corners::LEFT
+        } else {
+            crate::native::corners::ALL
+        };
+        crate::native::set_rounded_corners(&w, PANEL_CORNER_RADIUS, mask);
+    }
+}
 pub const PICKER_LABEL: &str = "picker";
 
 const PICKER_WIDTH: f64 = 210.0;
@@ -356,6 +373,7 @@ pub fn create_viewer_window(app: &AppHandle, label: &str, url: &str) -> tauri::R
         .build()?;
 
     setup_panel(&viewer)?;
+    crate::native::set_rounded_corners(&viewer, PANEL_CORNER_RADIUS, crate::native::corners::RIGHT);
     register_page_label(label);
     bump_slot_generation(label);
 
@@ -416,6 +434,7 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
     }
 
     set_active_page_label(label);
+    update_sidebar_corners(app);
 }
 
 /// Return a viewer slot to the pool.
@@ -429,6 +448,7 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
 /// the number of native windows stays bounded.
 pub fn recycle_slot(app: &AppHandle, label: &str) {
     unregister_page_label(label);
+    update_sidebar_corners(app);
     // Any pending work for the previous page now sees a stale generation.
     bump_slot_generation(label);
 
@@ -485,6 +505,7 @@ pub fn create_sidebar_panel(app: &AppHandle) -> tauri::Result<()> {
 
     setup_panel(&sidebar)?;
     apply_material(app, &sidebar, 0.0);
+    crate::native::set_rounded_corners(&sidebar, PANEL_CORNER_RADIUS, crate::native::corners::ALL);
 
     log::info!(
         "Sidebar panel created: tab bar {}px, height {}px at y={}",
@@ -807,13 +828,15 @@ pub fn create_picker_panel(app: &AppHandle) -> tauri::Result<()> {
     .build()?;
 
     setup_non_activating_panel(&picker)?;
-    apply_material(app, &picker, 12.0);
+    apply_material(app, &picker, PICKER_CORNER_RADIUS);
+    crate::native::set_rounded_corners(&picker, PICKER_CORNER_RADIUS, crate::native::corners::ALL);
     Ok(())
 }
 
 /// Show the picker popup near cursor (works on any screen)
 pub fn show_picker(app: &AppHandle, cursor_x: f64, cursor_y: f64) {
     use tauri::Emitter;
+    crate::picker_keys::set_picker_visible(true);
     // Find which screen the cursor is on for correct boundary clamping
     let screens = get_all_screens();
     let cursor_screen = screens.iter()
@@ -851,6 +874,7 @@ pub fn show_picker(app: &AppHandle, cursor_x: f64, cursor_y: f64) {
 
 /// Hide the picker popup
 pub fn hide_picker(app: &AppHandle) {
+    crate::picker_keys::set_picker_visible(false);
     if let Ok(p) = app.get_webview_panel(PICKER_LABEL) {
         p.order_out(None);
     }

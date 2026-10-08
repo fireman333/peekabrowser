@@ -19,7 +19,8 @@ interface PickerData {
 
 let autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
 let cursorVisited = false;
-let current: Destination[] = [];
+// Must match PICK_KEYS in src-tauri/src/picker_keys.rs.
+const PICK_KEYS = ["C", "V", "B", "N", "M"];
 let busy = false;
 
 async function refreshPicker() {
@@ -49,15 +50,10 @@ window.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("picker-close")!.addEventListener("click", dismissPicker);
 
-  // Keyboard works only when the panel has key focus (it is non-activating so
-  // the source app keeps focus); the mouse remains the primary path.
+  // C/V/B/N/M and Esc are handled natively (hardware key codes, so they work
+  // with any input method, e.g. 注音); this is only a fallback for Esc.
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      dismissPicker();
-    } else if (/^[1-9]$/.test(e.key)) {
-      const dest = current[Number(e.key) - 1];
-      if (dest) pick(dest);
-    }
+    if (e.key === "Escape") dismissPicker();
   });
 
   const card = document.getElementById("picker-card")!;
@@ -90,18 +86,19 @@ function renderPicker(data: PickerData) {
   renderPreview(data);
   const list = document.getElementById("picker-list")!;
   list.innerHTML = "";
-  current = data.destinations;
 
   data.destinations.forEach((dest, idx) => {
     const btn = document.createElement("button");
     btn.className = "picker-btn";
     btn.setAttribute("role", "option");
     const prefix = dest.clip_prompt?.trim();
-    btn.title = prefix ? `${dest.name} — prompt: ${prefix}` : dest.name;
+    const key = idx < PICK_KEYS.length ? ` (${PICK_KEYS[idx]})` : "";
+    btn.title = (prefix ? `${dest.name} — prompt: ${prefix}` : dest.name) + key;
+    if (key) btn.setAttribute("aria-keyshortcuts", PICK_KEYS[idx]);
     btn.innerHTML = `
       <span class="picker-icon">${destIcon(dest, 22)}</span>
       <span class="picker-name">${escapeHtml(dest.name)}</span>
-      ${idx < 9 ? `<kbd class="picker-key" aria-hidden="true">${idx + 1}</kbd>` : ""}
+      ${idx < PICK_KEYS.length ? `<kbd class="picker-key" aria-hidden="true">${PICK_KEYS[idx]}</kbd>` : ""}
     `;
     btn.addEventListener("click", () => pick(dest));
     list.appendChild(btn);
