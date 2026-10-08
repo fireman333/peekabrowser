@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_1.8.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_1.8.0_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_1.9.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_1.9.0_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
    ```bash
@@ -87,6 +87,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 | `⌘⇧S` | 螢幕截圖並傳送給 AI |
 | `⌘C` `⌘C` | 快速複製兩次，選擇要傳送到哪個 Destination |
 | `⌘⇧E` | 保存目前頁面的 AI 回答到「紀錄」（有選取文字時只保存選取內容） |
+| `C` `V` `B` `N` `M` | 在 `⌘C ⌘C` 選單中快速選擇前五個 Destination（注音等輸入法下也可用），`Esc` 關閉 |
 
 **側邊欄內快捷鍵**
 
@@ -227,7 +228,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_1.8.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_1.8.0_x64.dmg` (Intel)
+1. Open `Peekabrowser_1.9.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_1.9.0_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
    ```bash
@@ -303,6 +304,7 @@ Three buttons at the bottom of the sidebar (S / M / L):
 | `⌘⇧S` | Screenshot and send to AI |
 | `⌘C` `⌘C` | Quick-send clipboard to a Destination |
 | `⌘⇧E` | Save the current page's AI answer to Records (or just the selection, if any) |
+| `C` `V` `B` `N` `M` | In the `⌘C ⌘C` picker, pick the first five destinations (works with any input method); `Esc` dismisses |
 
 **In-sidebar Shortcuts**
 
@@ -439,6 +441,13 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### 版本紀錄
 
+**v1.9.0 — 選單快捷鍵、一鍵傳送、圓角外觀**
+
+- ⌨️ `⌘C ⌘C` 選單可按 C / V / B / N / M 選擇前五個 Destination，非英文輸入法下也能用
+- ⚡ 新設定「預設用第一個 Destination 開啟」：`⌘C ⌘C` 直接傳送，不顯示選單
+- 🔲 側邊欄、網頁視窗與選單改為連續曲線圓角，貼合新版 macOS 視窗
+
+
 **v1.8.0 — 低耗能、可靠傳送、回答紀錄**
 
 - 🔋 不再整個生命週期停用 App Nap，只在生成回答時持有活動 token；移除 16 ms 滑鼠與 30 ms 剪貼簿輪詢
@@ -487,6 +496,13 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v1.9.0 — Picker shortcuts, one-step send, rounded corners**
+
+- ⌨️ C / V / B / N / M pick the first five destinations in the `⌘C ⌘C` picker, with any input method
+- ⚡ New setting: send `⌘C ⌘C` straight to the first destination
+- 🔲 Continuous-curve rounded corners on the sidebar, viewer and picker
+
+
 **v1.8.0 — Low power, reliable delivery, saved answers**
 
 - 🔋 No app-lifetime App Nap opt-out; activity token only while generating; 16 ms mouse and 30 ms clipboard polling removed
@@ -533,4 +549,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v1.8.0 | Built with [Tauri](https://tauri.app)
+Peekabrowser v1.9.0 | Built with [Tauri](https://tauri.app)
