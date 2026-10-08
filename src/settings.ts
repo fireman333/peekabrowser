@@ -45,7 +45,63 @@ const saveBtn = document.getElementById("save-btn")!;
 const cancelBtn = document.getElementById("cancel-btn")!;
 const presetChips = document.getElementById("preset-chips")!;
 
+interface AppSettings {
+  edge_hover_enabled: boolean;
+  native_material: boolean;
+  background_unload_secs: number;
+}
+
+interface Diagnostics {
+  activity_work: number;
+  loaded_pages: number;
+  total_pages: number;
+  system_glass: boolean;
+  accessibility_trusted: boolean;
+}
+
+async function setupPowerSettings() {
+  const edge = document.getElementById("opt-edge-hover") as HTMLInputElement;
+  const material = document.getElementById("opt-material") as HTMLInputElement;
+  const unload = document.getElementById("opt-unload") as HTMLSelectElement;
+  let current: AppSettings;
+  try {
+    current = await invoke<AppSettings>("get_app_settings");
+  } catch {
+    return;
+  }
+  edge.checked = current.edge_hover_enabled;
+  material.checked = current.native_material;
+  unload.value = String(current.background_unload_secs);
+  if (!unload.value) unload.value = "300";
+  const save = async () => {
+    current = {
+      edge_hover_enabled: edge.checked,
+      native_material: material.checked,
+      background_unload_secs: Number(unload.value) || 300,
+    };
+    try { await invoke("save_app_settings", { settings: current }); } catch (_e) {}
+  };
+  edge.addEventListener("change", save);
+  material.addEventListener("change", save);
+  unload.addEventListener("change", save);
+
+  const diag = document.getElementById("diagnostics")!;
+  const refresh = async () => {
+    try {
+      const d = await invoke<Diagnostics>("get_diagnostics");
+      diag.textContent =
+        `Status: ${d.loaded_pages}/${d.total_pages} pages loaded · ` +
+        `${d.activity_work ? `${d.activity_work} generation(s) keeping the app awake` : "no activity token held"} · ` +
+        `material: ${d.system_glass ? "Liquid Glass" : "vibrancy"} · ` +
+        `⌘C⌘C: ${d.accessibility_trusted ? "key-triggered" : "adaptive sampling (grant Accessibility for key-triggered)"}`;
+    } catch (_e) {}
+  };
+  refresh();
+  setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
+  setupPowerSettings();
   await loadDestinations();
   await loadShortcuts();
   renderPresets();

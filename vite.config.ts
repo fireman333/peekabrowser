@@ -29,6 +29,7 @@ export default defineConfig(async () => ({
         picker: resolve(__dirname, "picker.html"),
         settings: resolve(__dirname, "settings.html"),
         systemConfig: resolve(__dirname, "system-config.html"),
+        records: resolve(__dirname, "records.html"),
       },
     },
   },
