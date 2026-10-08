@@ -86,6 +86,35 @@
       <p class="hint" id="diagnostics"></p>
     </section>
 
+    <section class="update-section">
+      <h2>更新 · Updates</h2>
+      <div class="update-row">
+        <div>
+          <strong>Peekabrowser <span id="app-version"></span></strong>
+          <small id="update-message">—</small>
+        </div>
+        <div class="update-actions">
+          <button id="update-check" class="btn-secondary">檢查更新</button>
+          <button id="update-install" class="btn-primary hidden">安裝並重新啟動</button>
+        </div>
+      </div>
+      <details id="update-notes" class="hidden"><summary>這個版本的新功能</summary><pre id="update-notes-body"></pre></details>
+      <label class="toggle-row">
+        <input type="checkbox" id="opt-auto-check" />
+        <span>
+          <strong>自動檢查更新</strong>
+          <small>啟動時與每天檢查一次 GitHub Releases。</small>
+        </span>
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="opt-auto-install" />
+        <span>
+          <strong>自動安裝更新</strong>
+          <small>找到新版本時自動下載、驗證並重新啟動（只在側邊欄隱藏且沒有正在生成的回答時進行）。未勾選時只會通知。</small>
+        </span>
+      </label>
+    </section>
+
     <section class="shortcuts-section">
       <h2>Keyboard Shortcuts</h2>
       <p class="hint">Click on a shortcut to change it, then press a new key combination.</p>

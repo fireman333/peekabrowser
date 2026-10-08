@@ -1131,3 +1131,40 @@ pub fn get_diagnostics(tab_manager: State<std::sync::Mutex<WebViewTabManager>>) 
 pub fn get_material_kind() -> String {
     crate::panel::MATERIAL_KIND.lock().map(|g| g.to_string()).unwrap_or_default()
 }
+
+// ─── Updates ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+pub fn get_update_status() -> crate::updater::UpdateStatus {
+    crate::updater::status()
+}
+
+#[tauri::command]
+pub async fn check_for_updates(app: AppHandle) -> Result<crate::updater::UpdateInfo, String> {
+    crate::updater::check(&app).map_err(|e| {
+        log::warn!("updater: {}", e);
+        e
+    })
+}
+
+/// Downloads, verifies and installs; the app quits and relaunches on success.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    crate::updater::install(&app)
+}
+
+#[tauri::command]
+pub fn open_release_page() -> Result<(), String> {
+    let url = crate::updater::status()
+        .info
+        .map(|i| i.page_url)
+        .filter(|u| u.starts_with("https://github.com/"))
+        .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", crate::updater::REPO));
+    std::process::Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}

@@ -291,6 +291,17 @@ button:focus-visible {
   color: #fff;
 }
 
+#settings-btn.has-update::after {
+  content: '';
+  position: absolute;
+  right: 7px;
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
 #pin-btn.pinned {
   color: #d97706;
   background: rgba(251, 191, 36, 0.18);

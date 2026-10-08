@@ -8,9 +8,10 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Toggle Sidebar", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Peekabrowser", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&toggle, &separator, &settings, &quit])?;
+    let menu = Menu::with_items(app, &[&toggle, &separator, &settings, &updates, &quit])?;
 
     TrayIconBuilder::with_id("main-tray")
         .tooltip("Peekabrowser")
@@ -26,6 +27,18 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(window) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
                     let _ = window.emit("open-settings", ());
                 }
+            }
+            "check-updates" => {
+                let _ = crate::commands::open_settings_window(app.clone());
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let msg = match crate::updater::check(&app) {
+                        Ok(i) if i.available => format!("Peekabrowser {} is available — see Settings to install.", i.latest),
+                        Ok(_) => "Peekabrowser is up to date.".to_string(),
+                        Err(e) => format!("Update check failed: {}", e),
+                    };
+                    crate::lifecycle::notify(&app, &msg);
+                });
             }
             "quit" => {
                 // Use std::process::exit to bypass the ExitRequested prevention handler
