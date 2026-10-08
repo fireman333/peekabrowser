@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::delivery::{Delivery, Payload, PickerState};
 use crate::destinations::{Destination, DestinationManager};
 use crate::webviews::{PageInfo, WebViewTabManager};
 
@@ -132,14 +133,8 @@ pub fn remove_destination(
     id: String,
 ) {
     dest_manager.remove(&id);
-    // Remove all pages for this destination
-    if let Ok(mut mgr) = tab_manager.lock() {
-        let removed = mgr.remove_pages_for_dest(&id);
-        for page in &removed {
-            crate::panel::destroy_page_panel(&app, &page.label);
-        }
-        emit_pages_update(&app, &mgr);
-    }
+    let _ = tab_manager;
+    crate::lifecycle::remove_pages_for_dest(&app, &id);
 
     // Notify sidebar to refresh destinations
     if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
@@ -160,89 +155,33 @@ pub fn reorder_destinations(
 }
 
 /// Switch to a destination (clicked in sidebar).
-/// Shows the last page for that dest, or creates a new one.
+/// Shows the last page for that dest (restoring it if unloaded), or creates one.
 #[tauri::command]
 pub fn switch_destination(
     app: AppHandle,
-    tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
     dest_manager: State<DestinationManager>,
     id: String,
 ) -> Result<(), String> {
     let dest = dest_manager
         .get_by_id(&id)
         .ok_or_else(|| format!("Destination '{}' not found", id))?;
-
-    if let Ok(mut mgr) = tab_manager.lock() {
-        // Check if there's an existing page for this destination
-        if let Some(page) = mgr.get_last_page_for_dest(&id) {
-            let label = page.label.clone();
-            let page_id = page.id.clone();
-            mgr.set_active(&page_id);
-            crate::panel::show_page_viewer(&app, &label);
-        } else {
-            // Try to reuse a recycled window, otherwise create new
-            let page = create_or_reuse_page(&app, &mut mgr, &id, &dest)?;
-            mgr.set_active(&page.id);
-            crate::panel::set_active_page_label(&page.label);
-        }
-
-        // Notify frontend about page update
-        emit_pages_update(&app, &mgr);
-    }
-
-    Ok(())
+    crate::lifecycle::switch_destination(&app, &dest)
 }
 
 /// Open a new tab for the given destination (always creates a new page).
 #[tauri::command]
 pub fn new_tab(
     app: AppHandle,
-    tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
     dest_manager: State<DestinationManager>,
     id: String,
 ) -> Result<(), String> {
     let dest = dest_manager
         .get_by_id(&id)
         .ok_or_else(|| format!("Destination '{}' not found", id))?;
-
-    let page_label;
-    if let Ok(mut mgr) = tab_manager.lock() {
-        let page = create_or_reuse_page(&app, &mut mgr, &id, &dest)?;
-        page_label = page.label.clone();
-        mgr.set_active(&page.id);
-        emit_pages_update(&app, &mgr);
-    } else {
-        return Err("Lock failed".to_string());
-    }
-
-    crate::panel::set_active_page_label(&page_label);
-    Ok(())
-}
-
-/// Helper: create a page by reusing a recycled window (if available) or creating a new one.
-fn create_or_reuse_page(
-    app: &AppHandle,
-    mgr: &mut WebViewTabManager,
-    dest_id: &str,
-    dest: &Destination,
-) -> Result<crate::webviews::PageInfo, String> {
-    if let Some(recycled_label) = crate::panel::pop_recycled_label() {
-        // Reuse the recycled window with its existing label
-        let page = mgr.create_page_with_label(dest_id, &dest.name, &dest.icon, &recycled_label);
-        crate::panel::reuse_page_panel(app, &recycled_label, &dest.url)
-            .map_err(|e| e.to_string())?;
-        Ok(page)
-    } else {
-        // Create a brand new window
-        let page = mgr.create_page(dest_id, &dest.name, &dest.icon);
-        crate::panel::create_page_panel(app, &page.label, &dest.url)
-            .map_err(|e| e.to_string())?;
-        Ok(page)
-    }
+    crate::lifecycle::open_new_page(&app, &dest).map(|_| ())
 }
 
 /// Open a new tab for the currently active destination (called from page viewer's Cmd+N).
-/// Finds the active page's destination and creates a new tab for it.
 #[tauri::command]
 pub fn new_tab_for_active(
     app: AppHandle,
@@ -255,29 +194,17 @@ pub fn new_tab_for_active(
             .map(|p| p.dest_id.clone())
             .ok_or_else(|| "No active page".to_string())?
     };
-    new_tab(app, tab_manager, dest_manager, dest_id)
+    new_tab(app, dest_manager, dest_id)
 }
 
 /// Send text to the active page viewer
 #[tauri::command]
-pub fn send_to_active(
-    app: AppHandle,
-    _tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
-    text: String,
-) -> Result<(), String> {
-    if let Some(label) = crate::panel::get_active_page_label() {
-        if let Some(viewer) = app.get_webview_window(&label) {
-            let escaped = text
-                .replace('\\', "\\\\")
-                .replace('`', "\\`")
-                .replace('$', "\\$");
-            let js = format!(
-                "window.__airyInjectText && window.__airyInjectText(`{}`)",
-                escaped
-            );
-            let _ = viewer.eval(&js);
-        }
-    }
+pub fn send_to_active(app: AppHandle, text: String) -> Result<(), String> {
+    let target = crate::lifecycle::active_target(&app).ok_or("No active page")?;
+    crate::delivery::spawn(
+        app,
+        Delivery { target, payload: Payload::Text { text }, prompt: String::new(), record_id: None },
+    );
     Ok(())
 }
 
@@ -300,57 +227,16 @@ pub fn get_pages(
     }
 }
 
-/// Switch to a specific page
+/// Switch to a specific page (restores it if it was unloaded)
 #[tauri::command]
-pub fn switch_page(
-    app: AppHandle,
-    tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
-    page_id: String,
-) -> Result<(), String> {
-    if let Ok(mut mgr) = tab_manager.lock() {
-        if let Some(page) = mgr.get_page(&page_id) {
-            let label = page.label.clone();
-            mgr.set_active(&page_id);
-            crate::panel::show_page_viewer(&app, &label);
-            emit_pages_update(&app, &mgr);
-        }
-    }
-    Ok(())
+pub fn switch_page(app: AppHandle, page_id: String) -> Result<(), String> {
+    crate::lifecycle::activate_page(&app, &page_id)
 }
 
 /// Close a specific page
 #[tauri::command]
-pub fn close_page(
-    app: AppHandle,
-    tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
-    page_id: String,
-) -> Result<(), String> {
-    // Collect info while holding the lock, then release before panel operations
-    let (removed_label, next_active_label, _pages_snapshot) = {
-        let mut mgr = match tab_manager.lock() {
-            Ok(m) => m,
-            Err(_) => return Ok(()), // poisoned lock — bail gracefully
-        };
-        let removed_label = mgr.remove_page(&page_id).map(|p| p.label);
-        let next_active_label = mgr.get_active_page().map(|p| p.label.clone());
-        let pages_snapshot = mgr.get_all_pages();
-        let active_id = mgr.active_page_id.clone();
-        // Emit pages update while we still have the snapshot
-        if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
-            let _ = sidebar.emit("pages-updated", &pages_snapshot);
-            if let Some(ref aid) = active_id {
-                let _ = sidebar.emit("active-page-changed", aid);
-            }
-        }
-        (removed_label, next_active_label, pages_snapshot)
-    };
-    // Lock is released — safe to do panel operations now
-    if let Some(label) = removed_label {
-        crate::panel::destroy_page_panel(&app, &label);
-    }
-    if let Some(label) = next_active_label {
-        crate::panel::show_page_viewer(&app, &label);
-    }
+pub fn close_page(app: AppHandle, page_id: String) -> Result<(), String> {
+    crate::lifecycle::close_page(&app, &page_id);
     Ok(())
 }
 
@@ -359,18 +245,31 @@ pub fn close_page(
 #[derive(Serialize)]
 pub struct PickerData {
     destinations: Vec<Destination>,
+    /// "text" | "image" | "" (nothing pending)
+    kind: String,
+    /// Text to send (text payloads).
     text: String,
+    /// Small preview for image payloads (data URL).
+    image_preview: Option<String>,
 }
 
 #[tauri::command]
 pub fn get_picker_data(
     dest_manager: State<DestinationManager>,
-    picker_state: State<crate::PickerState>,
+    picker_state: State<PickerState>,
 ) -> PickerData {
-    PickerData {
-        destinations: dest_manager.get_all(),
-        text: picker_state.0.lock().unwrap().clone(),
-    }
+    let pending = picker_state.0.lock().map(|s| s.payload.clone()).unwrap_or(None);
+    let (kind, text, image_preview) = match pending {
+        Some(Payload::Text { text }) => ("text", text, None),
+        Some(Payload::Image { path }) => {
+            let preview = std::fs::read(&path).ok().map(|d| {
+                format!("data:image/png;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &d))
+            });
+            ("image", String::new(), preview)
+        }
+        None => ("", String::new(), None),
+    };
+    PickerData { destinations: dest_manager.get_all(), kind: kind.into(), text, image_preview }
 }
 
 /// Handle system:// destinations — store state and open config window
@@ -432,8 +331,8 @@ pub struct SystemConfigData {
 }
 
 #[tauri::command]
-pub fn get_system_config_data(
-    config_state: State<SystemConfigState>,
+pub async fn get_system_config_data(
+    config_state: State<'_, SystemConfigState>,
 ) -> Result<SystemConfigData, String> {
     let item_type = config_state.item_type.lock().unwrap().clone();
     let text = config_state.text.lock().unwrap().clone();
@@ -647,16 +546,16 @@ pub fn close_system_config(app: AppHandle) {
 /// Public command: run OCR on the last screenshot and return extracted text.
 /// Called asynchronously by the system-config window frontend.
 #[tauri::command]
-pub fn run_ocr(app: AppHandle) -> Result<String, String> {
-    ocr_screenshot(&app)
+pub async fn run_ocr() -> Result<String, String> {
+    ocr_image(&crate::screenshot::capture_path())
 }
 
 /// Run OCR on the screenshot using the bundled ocr-helper binary.
 /// If the bundled binary can't be found or executed, compiles from
 /// embedded Swift source as a fallback (cached for subsequent calls).
-fn ocr_screenshot(_app: &AppHandle) -> Result<String, String> {
-    let screenshot_path = "/tmp/peekabrowser_screenshot.png";
-    if !std::path::Path::new(screenshot_path).exists() {
+pub fn ocr_image(path: &std::path::Path) -> Result<String, String> {
+    let screenshot_path = path;
+    if !screenshot_path.exists() {
         log::error!("OCR: screenshot file not found");
         return Err("Screenshot file not found".to_string());
     }
@@ -736,20 +635,30 @@ fn ocr_screenshot(_app: &AppHandle) -> Result<String, String> {
     }
 }
 
-/// User picked a destination in the picker popup — always creates a NEW page
+/// User picked a destination in the picker popup — always creates a NEW page.
+/// The payload comes from the pending query captured at trigger time; `text`
+/// is accepted for compatibility but a typed payload is preferred.
 #[tauri::command]
 pub fn pick_destination(
     app: AppHandle,
     dest_manager: State<DestinationManager>,
-    tab_manager: State<std::sync::Mutex<WebViewTabManager>>,
+    picker_state: State<PickerState>,
     id: String,
-    text: String,
+    text: Option<String>,
 ) -> Result<(), String> {
     crate::panel::hide_picker(&app);
 
     let dest = dest_manager
         .get_by_id(&id)
         .ok_or_else(|| format!("Destination '{}' not found", id))?;
+
+    // Take the pending query so a later pick can't resend stale content.
+    let pending = picker_state.0.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default();
+    let payload = match (pending.payload, text) {
+        (Some(p), _) => p,
+        (None, Some(t)) if !t.is_empty() => Payload::Text { text: t },
+        _ => return Err("Nothing to send".into()),
+    };
 
     // Handle system:// destinations (Calendar, Reminders) via AppleScript
     // Also handle "https://system://" which can happen if URL was auto-prefixed
@@ -761,232 +670,66 @@ pub fn pick_destination(
         None
     };
     if let Some(sys_url) = system_url {
-        let is_screenshot = text.starts_with("__screenshot__:");
-        let actual_text = if is_screenshot {
-            String::new() // OCR will be done async by the config window
-        } else {
-            text.clone()
+        let (is_image, actual_text) = match &payload {
+            Payload::Image { .. } => (true, String::new()), // OCR runs async in the config window
+            Payload::Text { text } => (false, text.clone()),
         };
-        // Set needs_ocr flag so the config window knows to run OCR
         if let Some(state) = app.try_state::<SystemConfigState>() {
-            *state.needs_ocr.lock().unwrap() = is_screenshot;
+            *state.needs_ocr.lock().unwrap() = is_image;
         }
         return handle_system_destination(&app, &sys_url, &actual_text);
     }
 
     crate::panel::show_panel(&app);
 
-    // Create a new page for this query (reuse recycled window if available)
-    let page_label;
-    if let Ok(mut mgr) = tab_manager.lock() {
-        let page = create_or_reuse_page(&app, &mut mgr, &id, &dest)?;
-        page_label = page.label.clone();
-        mgr.set_active(&page.id);
-        emit_pages_update(&app, &mgr);
-    } else {
-        return Err("Lock failed".to_string());
+    // Record what is being asked, where, and from which app.
+    let record_id = app.try_state::<crate::records::RecordStore>().and_then(|store| {
+        let (selection, attachment) = match &payload {
+            Payload::Text { text } => (Some(text.clone()), None),
+            Payload::Image { path } => {
+                let name = format!("{}.png", uuid::Uuid::new_v4());
+                let _ = std::fs::create_dir_all(&store.attachments_dir);
+                let ok = std::fs::copy(path, store.attachments_dir.join(&name)).is_ok();
+                (None, ok.then(|| format!("attachments/{}", name)))
+            }
+        };
+        let prompt = match &payload {
+            Payload::Text { text } => format!("{}{}", dest.clip_prompt, text),
+            Payload::Image { .. } => dest.clip_prompt.clone(),
+        };
+        store
+            .create_query(crate::records::NewQuery {
+                source_app: pending.source_app.clone(),
+                selection_text: selection,
+                attachment_path: attachment,
+                action_id: "send".into(),
+                destination_id: dest.id.clone(),
+                destination_name: dest.name.clone(),
+                prompt,
+            })
+            .map_err(|e| log::warn!("records: create failed: {}", e))
+            .ok()
+            .map(|r| r.id)
+    });
+    if let Some(w) = app.get_webview_window("records-window") {
+        let _ = w.emit("records-changed", ());
     }
 
-    crate::panel::set_active_page_label(&page_label);
-
-    // ─── Prompt prefix: prepend if configured ───
-    let inject_text = if !dest.clip_prompt.is_empty() {
-        format!("{}{}", dest.clip_prompt, text)
-    } else {
-        text.clone()
+    let page = crate::lifecycle::open_new_page(&app, &dest)?;
+    if let Some(rid) = &record_id {
+        crate::lifecycle::link_query(&app, &page.id, rid);
+    }
+    let label = page.label.clone().ok_or("page has no viewer")?;
+    let target = crate::delivery::Target {
+        page_id: page.id.clone(),
+        slot_gen: crate::panel::slot_generation(&label).ok_or("viewer slot missing")?,
+        label,
     };
-
-    // Inject content after page loads
-    let app2 = app.clone();
-    let label_clone = page_label.clone();
-    let is_screenshot = inject_text.starts_with("__screenshot__:");
-    std::thread::spawn(move || {
-        if is_screenshot {
-            // Screenshot mode: inject image via synthetic paste event with DataTransfer.
-            // Uses a guard flag to only inject ONCE — no retries after success.
-            let data_url = text.strip_prefix("__screenshot__:").unwrap_or("");
-            let paste_js = format!(r#"
-(function() {{
-    // Guard: only inject once
-    if (sessionStorage.getItem('__peekabrowserScreenshotDone')) return;
-
-    var dataUrl = "{}";
-    // Convert data URL to Blob
-    var parts = dataUrl.split(',');
-    var mime = parts[0].match(/:(.*?);/)[1];
-    var b64 = atob(parts[1]);
-    var arr = new Uint8Array(b64.length);
-    for (var i = 0; i < b64.length; i++) arr[i] = b64.charCodeAt(i);
-    var blob = new Blob([arr], {{ type: mime }});
-    var file = new File([blob], 'screenshot.png', {{ type: mime }});
-
-    // Find the input element
-    var selectors = [
-        '#prompt-textarea',
-        'div.ProseMirror[contenteditable]',
-        'rich-textarea [contenteditable="true"]',
-        'textarea:not([readonly])',
-        '[contenteditable="true"]'
-    ];
-    var target = null;
-    for (var sel of selectors) {{
-        var el = document.querySelector(sel);
-        if (el && el.offsetParent !== null) {{ target = el; break; }}
-    }}
-    if (!target) return; // Page not ready yet, let retry handle it
-    target.focus();
-
-    // Mark as done BEFORE dispatching (prevent re-entry)
-    sessionStorage.setItem('__peekabrowserScreenshotDone', '1');
-
-    // Try synthetic paste event
-    var dt = new DataTransfer();
-    dt.items.add(file);
-    var pasteEvt = new ClipboardEvent('paste', {{
-        clipboardData: dt,
-        bubbles: true,
-        cancelable: true
-    }});
-    target.dispatchEvent(pasteEvt);
-
-    // Also try drag-and-drop as fallback (only once)
-    setTimeout(function() {{
-        var dt2 = new DataTransfer();
-        dt2.items.add(file);
-        var dropEvt = new DragEvent('drop', {{
-            dataTransfer: dt2,
-            bubbles: true,
-            cancelable: true
-        }});
-        target.dispatchEvent(new DragEvent('dragenter', {{ dataTransfer: dt2, bubbles: true }}));
-        target.dispatchEvent(new DragEvent('dragover', {{ dataTransfer: dt2, bubbles: true }}));
-        target.dispatchEvent(dropEvt);
-    }}, 300);
-}})();
-"#, data_url);
-            // Retry up to 3 times, but the JS guard ensures only the first success takes effect
-            for &delay_ms in &[2500u64, 4000, 6000] {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                if let Some(viewer) = app2.get_webview_window(&label_clone) {
-                    let _ = viewer.eval(&paste_js);
-                }
-            }
-        } else {
-            // ─── Normal mode: inject text with retries ───
-            let escaped = inject_text
-                .replace('\\', "\\\\")
-                .replace('`', "\\`")
-                .replace('$', "\\$");
-            let inject_js = build_inject_js(&escaped);
-            for &delay_ms in &[1500u64, 3000, 5000] {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                if let Some(viewer) = app2.get_webview_window(&label_clone) {
-                    let _ = viewer.eval(&inject_js);
-                }
-            }
-        }
-    });
-
+    crate::delivery::spawn(
+        app.clone(),
+        Delivery { target, payload, prompt: dest.clip_prompt.clone(), record_id },
+    );
     Ok(())
-}
-
-/// Build the injection JS string
-fn build_inject_js(escaped_text: &str) -> String {
-    format!(r#"
-(function() {{
-    if (sessionStorage.getItem('__peekabrowserInjected')) return;
-    var text = `{}`;
-
-    var host = location.hostname;
-    if (host.includes('google.com') && !host.includes('gemini')) {{
-        var q = document.querySelector('textarea[name="q"], input[name="q"]');
-        if (q) {{
-            var proto = q.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-            var desc = Object.getOwnPropertyDescriptor(proto, 'value');
-            if (desc && desc.set) desc.set.call(q, text);
-            q.dispatchEvent(new Event('input', {{bubbles:true}}));
-            q.dispatchEvent(new Event('change', {{bubbles:true}}));
-            setTimeout(function() {{
-                var form = q.closest('form');
-                if (form) form.submit();
-            }}, 300);
-            sessionStorage.setItem('__peekabrowserInjected', '1');
-            return;
-        }}
-    }}
-
-    function pressEnter(el) {{
-        setTimeout(function() {{
-            el.dispatchEvent(new KeyboardEvent('keydown', {{key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}}));
-            el.dispatchEvent(new KeyboardEvent('keypress', {{key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}}));
-            el.dispatchEvent(new KeyboardEvent('keyup', {{key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}}));
-            var submitBtn = document.querySelector('button[aria-label*="Send"], button[aria-label*="send"], button[data-testid="send-button"], button.send-button, button[type="submit"]');
-            if (submitBtn) submitBtn.click();
-        }}, 500);
-    }}
-
-    if (host.includes('gemini.google.com')) {{
-        var rich = document.querySelector('rich-textarea');
-        if (rich) {{
-            var inner = rich.querySelector('.ql-editor, [contenteditable="true"], .textarea');
-            if (!inner) inner = rich.querySelector('div[contenteditable], p[contenteditable]');
-            if (!inner) inner = rich;
-            inner.focus();
-            document.execCommand('selectAll', false, null);
-            document.execCommand('insertText', false, text);
-            rich.dispatchEvent(new Event('input', {{bubbles:true}}));
-            setTimeout(function() {{
-                var sendBtn = document.querySelector('button.send-button, button[aria-label*="Send"], button[aria-label*="送出"], .send-button-container button, button[data-test-id="send-button"]');
-                if (sendBtn) sendBtn.click();
-                else pressEnter(inner);
-            }}, 500);
-            sessionStorage.setItem('__peekabrowserInjected', '1');
-            return;
-        }}
-        var ce = document.querySelector('[contenteditable="true"]');
-        if (ce) {{
-            ce.focus();
-            document.execCommand('selectAll', false, null);
-            document.execCommand('insertText', false, text);
-            pressEnter(ce);
-            sessionStorage.setItem('__peekabrowserInjected', '1');
-            return;
-        }}
-    }}
-
-    var selectors = [
-        '#prompt-textarea',
-        'div.ProseMirror[contenteditable]',
-        'textarea[placeholder*="Message"]',
-        'textarea[placeholder*="Ask"]',
-        'textarea:not([readonly])',
-        'input[type="search"]:not([readonly])',
-        'input[type="text"]:not([readonly])',
-        '[contenteditable="true"]'
-    ];
-    for (var sel of selectors) {{
-        var el = document.querySelector(sel);
-        if (el && el.offsetParent !== null) {{
-            if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {{
-                var desc = Object.getOwnPropertyDescriptor(
-                    el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
-                    'value'
-                );
-                if (desc && desc.set) {{ desc.set.call(el, text); }}
-                el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                el.dispatchEvent(new Event('change', {{bubbles: true}}));
-            }} else {{
-                el.focus();
-                document.execCommand('selectAll', false, null);
-                document.execCommand('insertText', false, text);
-            }}
-            pressEnter(el);
-            sessionStorage.setItem('__peekabrowserInjected', '1');
-            return;
-        }}
-    }}
-}})();
-"#, escaped_text)
 }
 
 #[tauri::command]
@@ -1055,62 +798,7 @@ pub fn open_settings_url(url: String) -> Result<(), String> {
 /// Screenshot: hide sidebar, use macOS screencapture interactive mode, show picker.
 #[tauri::command]
 pub fn take_screenshot(app: AppHandle) {
-    crate::panel::hide_panel(&app);
-
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        let tmp_path = "/tmp/peekabrowser_screenshot.png";
-        let _ = std::fs::remove_file(tmp_path);
-
-        let status = std::process::Command::new("/usr/sbin/screencapture")
-            .args(["-i", "-x", tmp_path])
-            .status();
-
-        log::info!("screencapture status: {:?}", status);
-
-        let (cx, cy) = crate::panel::get_cursor_topleft_pos();
-
-        match status {
-            Ok(s) if s.success() && std::path::Path::new(tmp_path).exists() => {
-                if let Ok(data) = std::fs::read(tmp_path) {
-                    let b64 = base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        &data,
-                    );
-                    let data_url = format!("data:image/png;base64,{}", b64);
-                    if let Some(state) = app.try_state::<crate::PickerState>() {
-                        *state.0.lock().unwrap() = format!("__screenshot__:{}", data_url);
-                    }
-                    // Keep screenshot file for potential OCR use by system destinations
-                    log::info!("Screenshot captured, showing picker");
-                }
-                // Wake up the Accessory app, then show picker on main thread
-                crate::hotkeys::global_shortcuts::activate_app();
-                let app2 = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    crate::panel::show_picker(&app2, cx, cy);
-                });
-            }
-            Ok(_) => {
-                log::info!("Screenshot cancelled");
-                crate::hotkeys::global_shortcuts::activate_app();
-                let app2 = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    crate::panel::show_panel(&app2);
-                });
-            }
-            _ => {
-                log::warn!("screencapture failed or permission denied");
-                crate::permissions::open_screen_recording_settings();
-                crate::hotkeys::global_shortcuts::activate_app();
-                let app2 = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    crate::panel::show_panel(&app2);
-                });
-            }
-        }
-    });
+    crate::screenshot::capture_to_picker(&app);
 }
 
 /// Reload the active page viewer
@@ -1194,14 +882,237 @@ pub fn save_shortcuts(
     Ok(())
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Answer saving & records ────────────────────────────────────────────────
 
-/// Emit pages update to the sidebar frontend
-fn emit_pages_update(app: &AppHandle, mgr: &WebViewTabManager) {
-    if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
-        let _ = sidebar.emit("pages-updated", mgr.get_all_pages());
-        if let Some(active) = mgr.get_active_page() {
-            let _ = sidebar.emit("active-page-changed", &active.id);
-        }
+#[derive(Serialize)]
+pub struct SaveResult {
+    pub record_id: String,
+    pub capture_status: String,
+    pub chars: usize,
+}
+
+/// Capture the answer on the active page (or the user's selection there) and
+/// store it with the query that page was opened for. Saving again updates the
+/// same record. Must run off the main thread.
+pub fn save_answer_blocking(app: &AppHandle) -> Result<SaveResult, String> {
+    let (page_id, label, query_id, dest_id, dest_name) = {
+        let mgr = app.state::<std::sync::Mutex<WebViewTabManager>>();
+        let mgr = mgr.lock().map_err(|_| "lock")?;
+        let p = mgr.get_active_page().ok_or("No active page")?;
+        (
+            p.id.clone(),
+            p.label.clone().ok_or("Page is not loaded")?,
+            p.query_id.clone(),
+            p.dest_id.clone(),
+            p.dest_name.clone(),
+        )
+    };
+    let capture: crate::records::Capture = crate::delivery::call(app, &label, "extract", &[])
+        .ok_or("Couldn't read this page")?;
+    if capture.text.trim().is_empty() && capture.markdown.trim().is_empty() {
+        return Err("No answer found — select the text you want to save, then try again.".into());
     }
+    let store = app.try_state::<crate::records::RecordStore>().ok_or("Records unavailable")?;
+    let existing = query_id.filter(|id| store.get(id).ok().flatten().is_some());
+    let record_id = match existing {
+        Some(id) => id,
+        None => {
+            let r = store
+                .create_query(crate::records::NewQuery {
+                    action_id: "manual".into(),
+                    destination_id: dest_id,
+                    destination_name: dest_name,
+                    ..Default::default()
+                })
+                .map_err(|e| e.to_string())?;
+            crate::lifecycle::link_query(app, &page_id, &r.id);
+            r.id
+        }
+    };
+    store.save_capture(&record_id, &capture).map_err(|e| e.to_string())?;
+    if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
+        let _ = sidebar.emit("records-changed", ());
+    }
+    if let Some(w) = app.get_webview_window("records-window") {
+        let _ = w.emit("records-changed", ());
+    }
+    Ok(SaveResult { record_id, capture_status: capture.capture_status, chars: capture.text.chars().count() })
+}
+
+/// Shared by the sidebar button and the ⌘⇧E shortcut: save and report.
+pub fn save_answer_and_notify(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let msg = match save_answer_blocking(&app) {
+            Ok(r) => match r.capture_status.as_str() {
+                "partial" => "Saved (still generating — save again when it finishes)".to_string(),
+                "manual_selection" => "Saved selection".to_string(),
+                "unknown" => "Saved (completeness unknown on this site)".to_string(),
+                _ => "Answer saved".to_string(),
+            },
+            Err(e) => e,
+        };
+        crate::lifecycle::notify(&app, &msg);
+    });
+}
+
+#[tauri::command]
+pub async fn save_answer(app: AppHandle) -> Result<SaveResult, String> {
+    save_answer_blocking(&app)
+}
+
+#[tauri::command]
+pub fn list_records(
+    store: State<crate::records::RecordStore>,
+    query: Option<String>,
+    favorites_only: Option<bool>,
+) -> Result<Vec<crate::records::Record>, String> {
+    store
+        .list(query.as_deref(), favorites_only.unwrap_or(false), 200)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_record(
+    store: State<crate::records::RecordStore>,
+    id: String,
+    tags: Vec<String>,
+    note: Option<String>,
+    favorite: bool,
+) -> Result<(), String> {
+    store.update_user_fields(&id, &tags, note.as_deref(), favorite).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_record(store: State<crate::records::RecordStore>, id: String) -> Result<bool, String> {
+    store.delete(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_record_attachment(store: State<crate::records::RecordStore>, id: String) -> Option<String> {
+    let rel = store.get(&id).ok().flatten()?.attachment_path?;
+    let data = std::fs::read(store.attachment_abs(&rel)?).ok()?;
+    Some(format!("data:image/png;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data)))
+}
+
+#[tauri::command]
+pub fn copy_record_markdown(app: AppHandle, store: State<crate::records::RecordStore>, id: String) -> Result<(), String> {
+    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or("Record not found")?;
+    crate::delivery::copy_to_clipboard(&app, &crate::records::to_markdown(&r));
+    Ok(())
+}
+
+/// Write the record as Markdown into ~/Downloads and reveal it in Finder.
+#[tauri::command]
+pub fn export_record_markdown(store: State<crate::records::RecordStore>, id: String) -> Result<String, String> {
+    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or("Record not found")?;
+    let home = std::env::var_os("HOME").ok_or("No HOME")?;
+    let dir = std::path::PathBuf::from(home).join("Downloads");
+    let _ = std::fs::create_dir_all(&dir);
+    let stem: String = r
+        .selection_text
+        .as_deref()
+        .unwrap_or(&r.destination_name)
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-')
+        .take(40)
+        .collect::<String>()
+        .trim()
+        .replace(' ', "-");
+    let name = format!("peekabrowser-{}-{}.md", if stem.is_empty() { "query" } else { &stem }, &r.id[..8]);
+    let path = dir.join(name);
+    std::fs::write(&path, crate::records::to_markdown(&r)).map_err(|e| e.to_string())?;
+    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Reopen a record's conversation in a new page of its destination.
+#[tauri::command]
+pub fn open_record(
+    app: AppHandle,
+    store: State<crate::records::RecordStore>,
+    dest_manager: State<DestinationManager>,
+    id: String,
+) -> Result<(), String> {
+    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or("Record not found")?;
+    let mut dest = dest_manager.get_by_id(&r.destination_id).ok_or("Destination no longer exists")?;
+    if let Some(u) = r.conversation_url.filter(|u| u.starts_with("http")) {
+        dest.url = u;
+    }
+    crate::panel::show_panel(&app);
+    let page = crate::lifecycle::open_new_page(&app, &dest)?;
+    crate::lifecycle::link_query(&app, &page.id, &id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_records_window(app: AppHandle) {
+    open_aux_window(&app, "records-window", "records.html", "Peekabrowser Records", 720.0, 560.0);
+}
+
+fn open_aux_window(app: &AppHandle, label: &str, page: &str, title: &str, w: f64, h: f64) {
+    use tauri::WebviewWindowBuilder;
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let (screen_w, screen_h) = crate::panel::get_primary_screen_size();
+    let _ = WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(page.into()))
+        .title(title)
+        .inner_size(w, h)
+        .position((screen_w - w) / 2.0, (screen_h - h) / 2.0)
+        .resizable(true)
+        .decorations(true)
+        .always_on_top(true)
+        .visible(true)
+        .build();
+}
+
+// ─── App settings & diagnostics ─────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_app_settings(store: State<crate::app_settings::AppSettingsStore>) -> crate::app_settings::AppSettings {
+    store.get()
+}
+
+#[tauri::command]
+pub fn save_app_settings(
+    app: AppHandle,
+    store: State<crate::app_settings::AppSettingsStore>,
+    settings: crate::app_settings::AppSettings,
+) {
+    store.update(settings);
+    crate::panel::hover_detector::sync_monitors(&app);
+    crate::lifecycle::ensure_maintenance(&app);
+}
+
+#[derive(Serialize)]
+pub struct Diagnostics {
+    /// In-flight user work holding an App Nap activity token (0 = none held).
+    activity_work: usize,
+    loaded_pages: usize,
+    total_pages: usize,
+    system_glass: bool,
+    accessibility_trusted: bool,
+}
+
+#[tauri::command]
+pub fn get_diagnostics(tab_manager: State<std::sync::Mutex<WebViewTabManager>>) -> Diagnostics {
+    let (loaded, total) = tab_manager
+        .lock()
+        .map(|m| (m.live_slot_count(), m.pages.len()))
+        .unwrap_or((0, 0));
+    Diagnostics {
+        activity_work: crate::activity::active_count(),
+        loaded_pages: loaded,
+        total_pages: total,
+        system_glass: crate::native::has_system_glass(),
+        accessibility_trusted: crate::native::accessibility_trusted(),
+    }
+}
+
+#[tauri::command]
+pub fn get_material_kind() -> String {
+    crate::panel::MATERIAL_KIND.lock().map(|g| g.to_string()).unwrap_or_default()
 }

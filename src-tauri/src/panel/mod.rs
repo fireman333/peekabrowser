@@ -1,7 +1,7 @@
 pub mod hover_detector;
 
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_nspanel::{ManagerExt, WebviewWindowExt};
 
 /// Remembered viewer width — persists across show/hide cycles
@@ -14,20 +14,14 @@ static ACTIVE_PAGE_LABEL: Mutex<Option<String>> = Mutex::new(None);
 /// All page viewer labels — for hiding all at once
 static ALL_PAGE_LABELS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Pool of recycled window labels — hidden off-screen, ready to be reused
-/// for new tabs instead of creating fresh WebContent processes.
+/// Pool of free viewer slots (windows on about:blank), reused before any new
+/// window is created. See `lifecycle` for the slot cap.
 static RECYCLED_POOL: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Max recycled windows to keep. Excess are abandoned on about:blank (~2-5MB each).
-const MAX_RECYCLED_POOL_SIZE: usize = 3;
-
-/// Track when each page was last backgrounded (label → Instant).
-/// Pages idle longer than MAX_BACKGROUND_SECS are auto-destroyed.
-static BACKGROUND_TIMESTAMPS: Mutex<Option<std::collections::HashMap<String, std::time::Instant>>> =
-    Mutex::new(None);
-
-/// Max seconds a page can stay frozen in background before auto-cleanup
-const MAX_BACKGROUND_SECS: u64 = 120;
+/// Slot label -> generation. Bumped every time a slot is (re)assigned or
+/// recycled, so background work for a previous page can detect staleness.
+static SLOT_GENERATIONS: Mutex<Option<std::collections::HashMap<String, u64>>> = Mutex::new(None);
+static NEXT_SLOT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Current screen origin (top-left coords) where the panel is displayed
 static CURRENT_SCREEN_X: Mutex<f64> = Mutex::new(0.0);
@@ -88,7 +82,7 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
         }
     });
 
-    // ─── On Gemini: hide embedded browser fingerprints + auto-recovery ───
+    // ─── On Gemini: hide embedded browser fingerprints ───
     if (_isGemini) {
         // 1. Hide __TAURI_INTERNALS__ — Gemini may detect this foreign object
         //    and degrade streaming. Keep a private ref for our keyboard shortcuts.
@@ -115,106 +109,9 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
             } catch(e) {}
         }
 
-        // 3. Auto-recovery: detect Gemini error/stuck states and try to recover.
-        var _recovering = false;
-        var _loadingStartTime = 0;
-        var _STUCK_THRESHOLD_MS = 30000; // 30s of spinner = stuck
-
-        function _clickRetryBtn() {
-            // Try clicking Gemini's retry/regenerate button
-            var btns = document.querySelectorAll('button');
-            for (var i = 0; i < btns.length; i++) {
-                var txt = btns[i].textContent || '';
-                if (/重試|再試一次|Retry|Try again|Regenerate/i.test(txt) && btns[i].offsetParent !== null) {
-                    console.log('[Peekabrowser] Clicking retry button: ' + txt.trim());
-                    btns[i].click();
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        function _clickStopBtn() {
-            // Try clicking Gemini's stop button to cancel stuck request
-            var btns = document.querySelectorAll('button[aria-label*="Stop"], button[aria-label*="停止"]');
-            for (var i = 0; i < btns.length; i++) {
-                if (btns[i].offsetParent !== null) {
-                    console.log('[Peekabrowser] Clicking stop button to cancel stuck request');
-                    btns[i].click();
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        function _isLoading() {
-            // Detect loading spinner / thinking indicator
-            var indicators = document.querySelectorAll(
-                '.loading-indicator, .thinking-indicator, [aria-label*="Loading"], [aria-label*="載入"], .spinner, mat-progress-spinner'
-            );
-            for (var i = 0; i < indicators.length; i++) {
-                if (indicators[i].offsetParent !== null) return true;
-            }
-            // Also check for stop button presence (means generation in progress)
-            var stopBtns = document.querySelectorAll('button[aria-label*="Stop"], button[aria-label*="停止"]');
-            for (var i = 0; i < stopBtns.length; i++) {
-                if (stopBtns[i].offsetParent !== null) return true;
-            }
-            return false;
-        }
-
-        function _checkGeminiHealth() {
-            if (_recovering) return;
-            try {
-                var bodyText = document.body ? document.body.innerText : '';
-                var hasError = /發生錯誤|出了點問題|Something went wrong|An error occurred|error \(\d+\)/i.test(bodyText);
-
-                if (hasError) {
-                    _recovering = true;
-                    console.log('[Peekabrowser] Gemini error detected, attempting retry...');
-                    // Try retry button first, fallback to reload
-                    if (!_clickRetryBtn()) {
-                        console.log('[Peekabrowser] No retry button found, reloading...');
-                        setTimeout(function() { location.reload(); }, 2000);
-                    }
-                    setTimeout(function() { _recovering = false; }, 8000);
-                    return;
-                }
-
-                // Detect stuck loading: spinner visible for too long
-                var loading = _isLoading();
-                var now = Date.now();
-                if (loading) {
-                    if (_loadingStartTime === 0) _loadingStartTime = now;
-                    var elapsed = now - _loadingStartTime;
-                    if (elapsed > _STUCK_THRESHOLD_MS) {
-                        _recovering = true;
-                        console.log('[Peekabrowser] Gemini stuck for ' + Math.round(elapsed/1000) + 's, stopping...');
-                        _clickStopBtn();
-                        _loadingStartTime = 0;
-                        setTimeout(function() { _recovering = false; }, 5000);
-                    }
-                } else {
-                    _loadingStartTime = 0;
-                }
-            } catch(e) {}
-        }
-
-        function _startHealthCheck() {
-            setTimeout(function() {
-                setInterval(_checkGeminiHealth, 3000);
-            }, 8000);
-        }
-        if (document.readyState === 'complete') _startHealthCheck();
-        else window.addEventListener('load', _startHealthCheck);
-
-        // 4. Keep-alive: prevent WKWebView content process from going idle.
-        //    A lightweight periodic DOM read keeps the JS engine and network
-        //    process active, reducing SSE disconnections.
-        setInterval(function() {
-            try { void document.hidden; } catch(e) {}
-        }, 10000);
-
+        // No resident health check / keep-alive / auto-stop here: generation is
+        // watched only while a Peekabrowser query is running (see delivery.rs),
+        // and long reasoning is never auto-stopped or reloaded.
         return;
     }
 
@@ -295,112 +192,19 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
             configurable: true
         });
     } catch(e) {}
-
-    // 6. Track blob URLs so we can revoke them when the tab is recycled
-    try {
-        window.__blobUrls = [];
-        var _origCreateObjectURL = URL.createObjectURL;
-        URL.createObjectURL = function(obj) {
-            var url = _origCreateObjectURL.call(URL, obj);
-            window.__blobUrls.push(url);
-            return url;
-        };
-        var _origRevokeObjectURL = URL.revokeObjectURL;
-        URL.revokeObjectURL = function(url) {
-            var idx = window.__blobUrls.indexOf(url);
-            if (idx > -1) window.__blobUrls.splice(idx, 1);
-            return _origRevokeObjectURL.call(URL, url);
-        };
-    } catch(e) {}
 })();
 "#;
 
-/// Aggressive cleanup script — runs before navigating a recycled window to about:blank.
-/// Releases media buffers, blob URLs, timers, canvases, service workers, caches.
-const CLEANUP_SCRIPT: &str = r#"
+/// Run before a slot goes back to the pool: stop loading and release media.
+/// Navigating to about:blank afterwards frees the page itself. Site storage
+/// (service workers, Cache API, cookies) is shared with other pages of the
+/// same origin and is deliberately left alone.
+const RELEASE_SCRIPT: &str = r#"
 (function() {
     try { window.stop(); } catch(e) {}
-    // Pause and unload all media (decoded frames are huge)
     try {
         document.querySelectorAll('video, audio').forEach(function(el) {
             el.pause(); el.removeAttribute('src'); el.load();
-        });
-    } catch(e) {}
-    // Revoke tracked blob URLs
-    try {
-        if (window.__blobUrls) {
-            window.__blobUrls.forEach(function(u) { URL.revokeObjectURL(u); });
-        }
-    } catch(e) {}
-    // Clear all timers
-    try {
-        var maxId = setTimeout(function(){}, 0);
-        for (var i = 0; i <= maxId; i++) { clearTimeout(i); clearInterval(i); }
-    } catch(e) {}
-    // Clear canvas GPU buffers
-    try {
-        document.querySelectorAll('canvas').forEach(function(c) { c.width = 0; c.height = 0; });
-    } catch(e) {}
-    // Unregister service workers
-    try {
-        if (navigator.serviceWorker) {
-            navigator.serviceWorker.getRegistrations().then(function(regs) {
-                regs.forEach(function(r) { r.unregister(); });
-            });
-        }
-    } catch(e) {}
-    // Clear Cache API
-    try {
-        if (window.caches) {
-            caches.keys().then(function(names) {
-                names.forEach(function(n) { caches.delete(n); });
-            });
-        }
-    } catch(e) {}
-    // Nuke DOM
-    try { document.documentElement.innerHTML = ''; } catch(e) {}
-})();
-"#;
-
-/// Freeze a background tab: pause media, suspend rAF.
-/// IMPORTANT:
-/// - Does NOT kill or intercept timers — preserves streaming connections (Gemini, ChatGPT)
-/// - Does NOT fake visibilityState — faking it causes Gemini to disconnect streams (error 13)
-/// - Moving the window off-screen is the primary "freeze"; this script only handles media/rAF
-const FREEZE_BACKGROUND_SCRIPT: &str = r#"
-(function() {
-    if (window.__peeka_frozen) return;
-    window.__peeka_frozen = true;
-    // Pause media
-    try {
-        document.querySelectorAll('video, audio').forEach(function(el) {
-            if (!el.paused) { el.__peeka_was_playing = true; el.pause(); }
-        });
-    } catch(e) {}
-    // Suspend rAF (saves CPU on animations, safe to intercept)
-    try {
-        window.__peeka_origRAF = window.requestAnimationFrame;
-        window.requestAnimationFrame = function() { return 0; };
-    } catch(e) {}
-})();
-"#;
-
-/// Thaw a frozen tab: restore rAF, resume media.
-const THAW_FOREGROUND_SCRIPT: &str = r#"
-(function() {
-    if (!window.__peeka_frozen) return;
-    window.__peeka_frozen = false;
-    // Restore rAF
-    try {
-        if (window.__peeka_origRAF) {
-            window.requestAnimationFrame = window.__peeka_origRAF;
-            delete window.__peeka_origRAF;
-        }
-    } catch(e) {}
-    // Resume media
-    try {
-        document.querySelectorAll('video, audio').forEach(function(el) {
-            if (el.__peeka_was_playing) { el.play().catch(function(){}); delete el.__peeka_was_playing; }
         });
     } catch(e) {}
 })();
@@ -503,7 +307,6 @@ pub fn unregister_page_label(label: &str) {
     if let Ok(mut guard) = ALL_PAGE_LABELS.lock() {
         guard.retain(|l| l != label);
     }
-    // If this was the active page, clear it
     if let Ok(mut guard) = ACTIVE_PAGE_LABEL.lock() {
         if guard.as_deref() == Some(label) {
             *guard = None;
@@ -511,91 +314,24 @@ pub fn unregister_page_label(label: &str) {
     }
 }
 
-/// Mark pages as backgrounded (for auto-cleanup tracking)
-fn mark_pages_backgrounded(labels: &[String]) {
-    if let Ok(mut guard) = BACKGROUND_TIMESTAMPS.lock() {
-        let map = guard.get_or_insert_with(std::collections::HashMap::new);
-        let now = std::time::Instant::now();
-        for label in labels {
-            map.insert(label.clone(), now);
-        }
+fn bump_slot_generation(label: &str) -> u64 {
+    let g = NEXT_SLOT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut guard) = SLOT_GENERATIONS.lock() {
+        guard.get_or_insert_with(std::collections::HashMap::new).insert(label.to_string(), g);
     }
+    g
 }
 
-/// Remove a page from background tracking (it's now active)
-fn unmark_page_backgrounded(label: &str) {
-    if let Ok(mut guard) = BACKGROUND_TIMESTAMPS.lock() {
-        if let Some(map) = guard.as_mut() {
-            map.remove(label);
-        }
+/// Current generation of a live slot (None once it is recycled).
+pub fn slot_generation(label: &str) -> Option<u64> {
+    if !ALL_PAGE_LABELS.lock().map(|g| g.iter().any(|l| l == label)).unwrap_or(false) {
+        return None;
     }
+    SLOT_GENERATIONS.lock().ok()?.as_ref()?.get(label).copied()
 }
 
-/// Auto-destroy pages that have been frozen in background too long.
-/// Called from a background thread so it doesn't block UI.
-fn cleanup_stale_background_pages(app: &AppHandle) {
-    let stale_labels: Vec<String> = if let Ok(mut guard) = BACKGROUND_TIMESTAMPS.lock() {
-        if let Some(map) = guard.as_mut() {
-            let cutoff = std::time::Duration::from_secs(MAX_BACKGROUND_SECS);
-            let stale: Vec<String> = map
-                .iter()
-                .filter(|(_, ts)| ts.elapsed() > cutoff)
-                .map(|(label, _)| label.clone())
-                .collect();
-            for label in &stale {
-                map.remove(label);
-            }
-            stale
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    if stale_labels.is_empty() {
-        return;
-    }
-
-    // Destroy stale pages and remove from tab manager
-    let tab_mgr = app.try_state::<std::sync::Mutex<crate::webviews::WebViewTabManager>>();
-
-    for label in &stale_labels {
-        log::info!("Auto-destroying stale background page: {}", label);
-
-        // Remove from tab manager
-        if let Some(ref mgr_state) = tab_mgr {
-            if let Ok(mut mgr) = mgr_state.lock() {
-                // Find page by label and remove it
-                let page_id = mgr.get_all_pages().iter()
-                    .find(|p| &p.label == label)
-                    .map(|p| p.id.clone());
-                if let Some(pid) = page_id {
-                    mgr.remove_page(&pid);
-                }
-            }
-        }
-
-        // Destroy the webview panel
-        destroy_page_panel(app, label);
-    }
-
-    // Notify sidebar of page changes
-    if let Some(ref mgr_state) = tab_mgr {
-        if let Ok(mgr) = mgr_state.lock() {
-            if let Some(sidebar) = app.get_webview_window(SIDEBAR_LABEL) {
-                let pages = mgr.get_all_pages();
-                let _ = sidebar.emit("pages-updated", &pages);
-                if let Some(ref active_id) = mgr.active_page_id {
-                    let _ = sidebar.emit("active-page-changed", active_id);
-                }
-            }
-        }
-    }
-}
-
-/// Create a new page viewer NSPanel with Safari UA
-pub fn create_page_panel(app: &AppHandle, label: &str, url: &str) -> tauri::Result<()> {
+/// Create a brand-new viewer window (only when no pooled slot is available).
+pub fn create_viewer_window(app: &AppHandle, label: &str, url: &str) -> tauri::Result<()> {
     let sx = current_screen_x();
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
@@ -615,183 +351,113 @@ pub fn create_page_panel(app: &AppHandle, label: &str, url: &str) -> tauri::Resu
         .transparent(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .visible(true)
+        .visible(false)
         .devtools(true)
         .build()?;
 
     setup_panel(&viewer)?;
     register_page_label(label);
+    bump_slot_generation(label);
 
-    log::info!("Created page panel: {} -> {}", label, url);
+    log::info!("Created viewer slot: {} -> {}", label, url);
     Ok(())
 }
 
-/// Show a specific page viewer (and hide all others)
+/// Point a pooled slot at a new URL. Showing it is up to `show_page_viewer`.
+pub fn navigate_slot(app: &AppHandle, label: &str, url: &str) -> tauri::Result<()> {
+    let w = app
+        .get_webview_window(label)
+        .ok_or_else(|| tauri::Error::AssetNotFound(format!("slot {} missing", label)))?;
+    let parsed = url
+        .parse::<url::Url>()
+        .map_err(|e| tauri::Error::AssetNotFound(format!("Invalid URL: {} ({})", url, e)))?;
+    register_page_label(label);
+    bump_slot_generation(label);
+    crate::native::set_media_suspended(&w, false);
+    w.navigate(parsed)?;
+    log::info!("Reusing viewer slot '{}' -> {}", label, url);
+    Ok(())
+}
+
+/// Show a specific page viewer and hide all others.
 pub fn show_page_viewer(app: &AppHandle, label: &str) {
     let sx = current_screen_x();
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
 
-    // Hide all other page viewers via order_out (keeps WebView in place so
-    // WebKit doesn't kill network connections like Gemini's streaming channel)
-    let mut to_freeze: Vec<String> = Vec::new();
-    if let Ok(guard) = ALL_PAGE_LABELS.lock() {
-        for other in guard.iter() {
-            if other != label {
-                if let Ok(p) = app.get_webview_panel(other) {
-                    p.order_out(None);
-                }
-                to_freeze.push(other.clone());
-            }
+    // order_out keeps the WebView in place, so WebKit doesn't drop network
+    // connections (e.g. Gemini's stream). Occluded windows get throttled
+    // rAF from WebKit itself; we only suspend media via the public API.
+    let others: Vec<String> = ALL_PAGE_LABELS
+        .lock()
+        .map(|g| g.iter().filter(|l| l.as_str() != label).cloned().collect())
+        .unwrap_or_default();
+    for other in &others {
+        if let Ok(p) = app.get_webview_panel(other) {
+            p.order_out(None);
+        }
+        if let Some(w) = app.get_webview_window(other) {
+            crate::native::set_media_suspended(&w, true);
         }
     }
 
-    // Record background timestamp for hidden pages
-    mark_pages_backgrounded(&to_freeze);
-
-    // Remove target page from background tracking (it's now active)
-    unmark_page_backgrounded(label);
-
-    // Async freeze: spawn thread so eval() on a stuck page doesn't block UI
-    if !to_freeze.is_empty() {
-        let app_freeze = app.clone();
-        std::thread::spawn(move || {
-            for lbl in &to_freeze {
-                if let Some(w) = app_freeze.get_webview_window(lbl) {
-                    let _ = w.eval(FREEZE_BACKGROUND_SCRIPT);
-                }
-            }
-        });
-    }
-
-    // Show and THAW the target page viewer
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
         let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
-        let _ = w.show();
-        let _ = w.eval(THAW_FOREGROUND_SCRIPT);
+        crate::native::set_media_suspended(&w, false);
+        if is_panel_visible(app) {
+            let _ = w.show();
+        }
     }
-    if let Ok(p) = app.get_webview_panel(label) {
-        p.show();
+    if is_panel_visible(app) {
+        if let Ok(p) = app.get_webview_panel(label) {
+            p.show();
+        }
     }
 
     set_active_page_label(label);
-
-    // Trigger background cleanup of stale pages
-    let app_cleanup = app.clone();
-    std::thread::spawn(move || {
-        cleanup_stale_background_pages(&app_cleanup);
-    });
 }
 
-/// Destroy a page viewer panel.
+/// Return a viewer slot to the pool.
 ///
 /// IMPORTANT: We CANNOT call `w.destroy()` or `w.close()` on NSPanel-wrapped
 /// WebviewWindows — doing so triggers a native crash (SIGABRT) in tao's
-/// `control_flow_end_handler` during WKWebView teardown.
-///
-/// Instead we:
-/// 1. Navigate to `about:blank` — WebKit releases the heavy page resources
-///    (DOM tree, images, JavaScript heap, network connections)
-/// 2. Clear any remaining DOM content
-/// 3. Shrink the window to 1×1 and hide it off-screen
-///
-/// The WebContent process stays alive but uses minimal memory (~2-5 MB for
-/// about:blank vs. 50-300 MB for real pages). This is the best we can do
-/// without a native Tauri API for safe window disposal in NSPanel mode.
-pub fn destroy_page_panel(app: &AppHandle, label: &str) {
+/// `control_flow_end_handler` during WKWebView teardown. Instead slots are
+/// recycled: hidden, media released, navigated to about:blank (which frees
+/// the page's DOM/JS heap/connections), and reused by the next page. The
+/// lifecycle module caps live slots and always reuses pooled ones first, so
+/// the number of native windows stays bounded.
+pub fn recycle_slot(app: &AppHandle, label: &str) {
     unregister_page_label(label);
-    unmark_page_backgrounded(label);
+    // Any pending work for the previous page now sees a stale generation.
+    bump_slot_generation(label);
 
-    // Hide the NSPanel
     if let Ok(p) = app.get_webview_panel(label) {
         p.order_out(None);
     }
-
-    // Check if we should add to pool BEFORE doing window operations
-    let add_to_pool = if let Ok(mut pool) = RECYCLED_POOL.lock() {
-        if pool.len() < MAX_RECYCLED_POOL_SIZE {
-            pool.push(label.to_string());
-            log::info!("Added to recycle pool: {} (pool size: {})", label, pool.len());
-            true
-        } else {
-            log::info!("Recycle pool full ({}), discarding: {}", pool.len(), label);
-            false
-        }
-    } else {
-        false
-    };
-
     if let Some(w) = app.get_webview_window(label) {
-        // Hide and move off-screen
-        let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, -9999.0));
-        let _ = w.set_size(tauri::LogicalSize::new(1.0, 1.0));
         let _ = w.hide();
-
-        // Run aggressive JS cleanup (release media, blobs, timers, caches, DOM)
-        let _ = w.eval(CLEANUP_SCRIPT);
-
-        if !add_to_pool {
-            // Excess window (not in pool): navigate to about:blank to fully release
-            // page context. No race condition since it won't be reused.
-            if let Ok(url) = "about:blank".parse::<url::Url>() {
-                let _ = w.navigate(url);
-            }
+        let _ = w.eval(RELEASE_SCRIPT);
+        crate::native::set_media_suspended(&w, true);
+        if let Ok(url) = "about:blank".parse::<url::Url>() {
+            let _ = w.navigate(url);
         }
-        // Pool windows: DON'T navigate to about:blank.
-        // The JS cleanup already cleared DOM/media/timers.
-        // When reused, navigate() to new URL replaces everything.
-        // This avoids the race condition where delayed about:blank
-        // would overwrite a reuse navigation.
     }
-}
-
-/// Pop a recycled window label from the pool (if any are available).
-/// The caller should use `reuse_page_panel()` to navigate and show it.
-pub fn pop_recycled_label() -> Option<String> {
     if let Ok(mut pool) = RECYCLED_POOL.lock() {
-        let label = pool.pop();
-        if let Some(ref l) = label {
-            log::info!("Popped from recycle pool: {} (remaining: {})", l, pool.len());
-        } else {
-            log::info!("Pool empty, will create new window");
+        if !pool.iter().any(|l| l == label) {
+            pool.push(label.to_string());
         }
-        label
-    } else {
-        None
+        log::info!("Recycled slot {} (pool size {})", label, pool.len());
     }
 }
 
-/// Reuse a recycled window: navigate to a new URL and show it.
-pub fn reuse_page_panel(app: &AppHandle, label: &str, url: &str) -> tauri::Result<()> {
-    let sx = current_screen_x();
-    let (panel_height, panel_y) = panel_geometry();
-    let viewer_width = get_viewer_width();
-
-    if let Some(w) = app.get_webview_window(label) {
-        let parsed = url.parse::<url::Url>().map_err(|e| {
-            tauri::Error::AssetNotFound(format!("Invalid URL: {} ({})", url, e))
-        })?;
-        log::info!("Reusing window '{}' -> {}", label, url);
-        let _ = w.navigate(parsed);
-        let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
-        let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
-        let _ = w.show();
-    } else {
-        log::warn!("Window '{}' NOT FOUND — reuse failed!", label);
-    }
-    if let Ok(p) = app.get_webview_panel(label) {
-        p.show();
-    }
-
-    register_page_label(label);
-    log::info!("Reused page panel: {} -> {}", label, url);
-    Ok(())
+/// Pop a free slot label from the pool, if any.
+pub fn pop_recycled_label() -> Option<String> {
+    RECYCLED_POOL.lock().ok()?.pop()
 }
 
 /// Check if a page is in the process of closing.
-/// (Currently always false — we no longer destroy windows, so no crash-prone
-/// close flow exists. Kept for API compatibility with lib.rs on_window_event.)
+/// (Always false — windows are never destroyed. Kept for lib.rs on_window_event.)
 pub fn is_page_closing(_label: &str) -> bool {
     false
 }
@@ -818,6 +484,7 @@ pub fn create_sidebar_panel(app: &AppHandle) -> tauri::Result<()> {
     .build()?;
 
     setup_panel(&sidebar)?;
+    apply_material(app, &sidebar, 0.0);
 
     log::info!(
         "Sidebar panel created: tab bar {}px, height {}px at y={}",
@@ -827,6 +494,44 @@ pub fn create_sidebar_panel(app: &AppHandle) -> tauri::Result<()> {
     );
     Ok(())
 }
+
+/// Native material behind transparent chrome windows: system Liquid Glass on
+/// macOS 26+, NSVisualEffectView vibrancy on 13–15 (never both). The page
+/// marks which one is active so CSS can drop its solid background.
+fn apply_material(app: &AppHandle, window: &tauri::WebviewWindow, radius: f64) {
+    let enabled = app
+        .try_state::<crate::app_settings::AppSettingsStore>()
+        .map(|s| s.get().native_material)
+        .unwrap_or(true);
+    if !enabled {
+        return;
+    }
+    let kind = if crate::native::install_system_glass(window, radius) {
+        "glass"
+    } else {
+        use tauri::utils::config::WindowEffectsConfig;
+        use tauri::window::{Effect, EffectState};
+        let effect = if window.label() == PICKER_LABEL { Effect::Popover } else { Effect::Sidebar };
+        let cfg = WindowEffectsConfig {
+            effects: vec![effect],
+            state: Some(EffectState::FollowsWindowActiveState),
+            radius: if radius > 0.0 { Some(radius) } else { None },
+            color: None,
+        };
+        match window.set_effects(cfg) {
+            Ok(_) => "vibrancy",
+            Err(e) => {
+                log::warn!("vibrancy unavailable: {}", e);
+                return;
+            }
+        }
+    };
+    let _ = window.eval(&format!("document.documentElement.dataset.material = '{}';", kind));
+    MATERIAL_KIND.lock().map(|mut g| *g = kind).ok();
+}
+
+/// "glass", "vibrancy" or "" — re-announced to pages after they load.
+pub static MATERIAL_KIND: Mutex<&'static str> = Mutex::new("");
 
 /// Panel that can become key (accepts keyboard input)
 fn setup_panel(window: &tauri::WebviewWindow) -> tauri::Result<()> {
@@ -891,7 +596,6 @@ pub fn get_all_screens() -> Vec<ScreenRect> {
     #[cfg(target_os = "macos")]
     unsafe {
         use cocoa::appkit::NSScreen;
-        use cocoa::base::nil;
         use objc::{msg_send, sel, sel_impl};
 
         let screens: *mut objc::runtime::Object = msg_send![objc::runtime::Class::get("NSScreen").unwrap(), screens];
@@ -979,7 +683,7 @@ pub fn show_panel_from_edge(app: &AppHandle) {
 
 /// Show sidebar + active page viewer (manual trigger — sets manual show mode)
 pub fn show_panel(app: &AppHandle) {
-    hover_detector::mark_manual_show();
+    hover_detector::mark_manual_show(app);
     update_current_screen();
     show_panel_inner(app);
 }
@@ -1012,12 +716,15 @@ fn show_panel_inner(app: &AppHandle) {
             let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
             let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
             let _ = w.show();
-            let _ = w.eval(THAW_FOREGROUND_SCRIPT);
+            crate::native::set_media_suspended(&w, false);
         }
         if let Ok(p) = app.get_webview_panel(&label) {
             p.show();
         }
     }
+
+    crate::lifecycle::on_panel_shown(app);
+    hover_detector::sync_monitors(app);
 }
 
 /// Hide sidebar + all page viewers, freezing all tabs to save memory/CPU
@@ -1034,31 +741,20 @@ pub fn hide_panel(app: &AppHandle) {
     }
 
     // Hide all page viewers via order_out (don't move off-screen —
-    // moving to -9999 causes WebKit to kill streaming connections)
-    let mut to_freeze: Vec<String> = Vec::new();
-    if let Ok(guard) = ALL_PAGE_LABELS.lock() {
-        for label in guard.iter() {
-            if let Ok(p) = app.get_webview_panel(label) {
-                p.order_out(None);
-            }
-            to_freeze.push(label.clone());
+    // moving to -9999 causes WebKit to kill streaming connections).
+    // Generation keeps running; only media is suspended.
+    let labels: Vec<String> = ALL_PAGE_LABELS.lock().map(|g| g.clone()).unwrap_or_default();
+    for label in &labels {
+        if let Ok(p) = app.get_webview_panel(label) {
+            p.order_out(None);
+        }
+        if let Some(w) = app.get_webview_window(label) {
+            crate::native::set_media_suspended(&w, true);
         }
     }
 
-    // Record all pages as backgrounded
-    mark_pages_backgrounded(&to_freeze);
-
-    // Async freeze: don't let a stuck page block the hide operation
-    if !to_freeze.is_empty() {
-        let app_freeze = app.clone();
-        std::thread::spawn(move || {
-            for lbl in &to_freeze {
-                if let Some(w) = app_freeze.get_webview_window(lbl) {
-                    let _ = w.eval(FREEZE_BACKGROUND_SCRIPT);
-                }
-            }
-        });
-    }
+    crate::lifecycle::on_panel_hidden(app);
+    hover_detector::sync_monitors(app);
 }
 
 /// Toggle panels
@@ -1111,6 +807,7 @@ pub fn create_picker_panel(app: &AppHandle) -> tauri::Result<()> {
     .build()?;
 
     setup_non_activating_panel(&picker)?;
+    apply_material(app, &picker, 12.0);
     Ok(())
 }
 
@@ -1163,22 +860,25 @@ pub fn hide_picker(app: &AppHandle) {
     }
 }
 
-/// Get cursor position in top-left global screen coordinates
+/// Get cursor position in top-left global screen coordinates.
+/// Converts with the *primary* screen's height (screens[0]); `mainScreen` is
+/// the screen of the key window and gives wrong results on multi-monitor setups.
 pub fn get_cursor_topleft_pos() -> (f64, f64) {
     #[cfg(target_os = "macos")]
     unsafe {
         use cocoa::appkit::NSScreen;
-        use cocoa::base::nil;
         use cocoa::foundation::NSPoint;
         use objc::{msg_send, sel, sel_impl};
         let cls = objc::runtime::Class::get("NSEvent").unwrap();
         let location: NSPoint = msg_send![cls, mouseLocation];
-        // Use primary screen height for coordinate conversion
-        let screen = NSScreen::mainScreen(nil);
-        let primary_h = if screen.is_null() {
+        let screens: *mut objc::runtime::Object =
+            msg_send![objc::runtime::Class::get("NSScreen").unwrap(), screens];
+        let count: usize = msg_send![screens, count];
+        let primary_h = if count == 0 {
             900.0
         } else {
-            NSScreen::frame(screen).size.height
+            let primary: *mut objc::runtime::Object = msg_send![screens, objectAtIndex: 0usize];
+            NSScreen::frame(primary).size.height
         };
         (location.x, primary_h - location.y)
     }

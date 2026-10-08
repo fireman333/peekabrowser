@@ -1,4 +1,5 @@
 use tauri::{AppHandle, Manager};
+
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use super::shortcut_store::{parse_shortcut, ShortcutStore};
@@ -32,7 +33,7 @@ pub fn register_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
             } else if shortcut == &screenshot_shortcut {
                 do_screenshot(&app_handle);
             } else if shortcut == &export_shortcut {
-                log::info!("Export shortcut triggered");
+                crate::commands::save_answer_and_notify(&app_handle);
             }
         },
     )?;
@@ -53,65 +54,7 @@ pub fn re_register_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::
 }
 
 fn do_screenshot(app: &AppHandle) {
-    crate::panel::hide_panel(app);
-    let app2 = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        let tmp_path = "/tmp/peekabrowser_screenshot.png";
-        let _ = std::fs::remove_file(tmp_path);
-
-        let status = std::process::Command::new("/usr/sbin/screencapture")
-            .args(["-i", "-x", tmp_path])
-            .status();
-
-        log::info!("screencapture (shortcut) status: {:?}", status);
-
-        // Capture cursor position while still on the background thread
-        // (NSEvent mouseLocation is thread-safe)
-        let (cx, cy) = crate::panel::get_cursor_topleft_pos();
-
-        match status {
-            Ok(s) if s.success() && std::path::Path::new(tmp_path).exists() => {
-                if let Ok(data) = std::fs::read(tmp_path) {
-                    let b64 = base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        &data,
-                    );
-                    let data_url = format!("data:image/png;base64,{}", b64);
-                    if let Some(state) = app2.try_state::<crate::PickerState>() {
-                        *state.0.lock().unwrap() = format!("__screenshot__:{}", data_url);
-                    }
-                    // Keep screenshot file for potential OCR use by system destinations
-                    log::info!("Screenshot captured, showing picker");
-                }
-
-                // Wake up the Accessory app's event loop, then show picker on main thread
-                activate_app();
-                let app3 = app2.clone();
-                let _ = app2.run_on_main_thread(move || {
-                    crate::panel::show_picker(&app3, cx, cy);
-                });
-            }
-            Ok(_) => {
-                log::info!("Screenshot cancelled by user");
-                activate_app();
-                let app3 = app2.clone();
-                let _ = app2.run_on_main_thread(move || {
-                    crate::panel::show_panel(&app3);
-                });
-            }
-            _ => {
-                log::warn!("screencapture failed from shortcut, opening settings");
-                crate::permissions::open_screen_recording_settings();
-                activate_app();
-                let app3 = app2.clone();
-                let _ = app2.run_on_main_thread(move || {
-                    crate::panel::show_panel(&app3);
-                });
-            }
-        }
-    });
+    crate::screenshot::capture_to_picker(app);
 }
 
 /// Wake up the Accessory app's main thread event loop.
