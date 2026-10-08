@@ -36,11 +36,13 @@ const statusLive = document.getElementById("status-live")!;
 
 window.addEventListener("DOMContentLoaded", async () => {
   hydrateIcons();
-  await initI18n();
+  // Language loads in the background; the sidebar renders immediately with the
+  // default strings and re-renders if the saved language differs.
   onLangChange(() => {
     renderTabBar();
     markUpdate(lastUpdate);
   });
+  initI18n();
   installFaviconFallback(tabList);
   applyMaterial(invoke);
   await loadDestinations();

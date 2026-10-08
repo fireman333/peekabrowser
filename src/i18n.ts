@@ -258,7 +258,8 @@ export function getLang(): Lang {
 
 /** Translate `key`, replacing `{name}` placeholders from `vars`. */
 export function t(key: Key, vars?: Record<string, string | number>): string {
-  let s = DICT[key][lang];
+  const entry = DICT[key] as Entry | undefined;
+  let s = entry ? entry[lang] : String(key);
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(String(v));
   return s;
 }
@@ -292,16 +293,29 @@ export function setLang(next: Lang): void {
 
 /** Load the saved language, apply it, and follow changes made in Settings. */
 export async function initI18n(): Promise<void> {
+  // Never let a failed or slow settings read block a page from rendering:
+  // fall back to the default language after a short timeout.
   let next: Lang = DEFAULT_LANG;
   try {
-    const s = await invoke<{ language?: string }>("get_app_settings");
-    next = normalizeLang(s.language);
-  } catch {
-    /* keep the default */
+    const s = await Promise.race([
+      invoke<{ language?: string }>("get_app_settings"),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+    ]);
+    if (s) next = normalizeLang(s.language);
+  } catch (e) {
+    console.warn("i18n: falling back to default language", e);
   }
   const changed = next !== lang;
   lang = next;
-  applyI18n();
-  if (changed) listeners.forEach((fn) => fn(lang));
-  listen<string>("language-changed", (e) => setLang(normalizeLang(e.payload))).catch(() => {});
+  try {
+    applyI18n();
+    if (changed) listeners.forEach((fn) => fn(lang));
+  } catch (e) {
+    console.error("i18n: apply failed", e);
+  }
+  try {
+    listen<string>("language-changed", (e) => setLang(normalizeLang(e.payload))).catch(() => {});
+  } catch {
+    /* not running inside Tauri */
+  }
 }
