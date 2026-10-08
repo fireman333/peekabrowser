@@ -3,16 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
   <link rel="stylesheet" href="/src/picker.css" />
   <script type="module" src="/src/picker.ts" defer></script>
 </head>
 <body>
-  <div id="picker-card">
+  <div id="picker-card" role="dialog" aria-labelledby="picker-title">
     <div id="picker-header">
-      <span>Send clipboard to…</span>
-      <button id="picker-close" title="Dismiss">✕</button>
+      <span id="picker-title">Send to…</span>
+      <button id="picker-close" data-icon="close" aria-label="Dismiss (Esc)" title="Dismiss (Esc)"></button>
     </div>
-    <div id="picker-list"></div>
+    <div id="picker-preview" aria-live="polite"></div>
+    <div id="picker-list" role="listbox" aria-label="Destinations"></div>
+    <div id="picker-hint">1–9 to pick · Esc to dismiss</div>
   </div>
 </body>
 </html>

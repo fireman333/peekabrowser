@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { applyMaterial, destIcon, escapeHtml, hydrateIcons, installFaviconFallback } from "./icons";
 
 interface Destination {
   id: string;
@@ -11,19 +12,24 @@ interface Destination {
 
 interface PickerData {
   destinations: Destination[];
+  kind: "text" | "image" | "";
   text: string;
+  image_preview: string | null;
 }
 
 let autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
 let cursorVisited = false;
+let current: Destination[] = [];
+let busy = false;
 
 async function refreshPicker() {
   try {
     const data = await invoke<PickerData>("get_picker_data");
     if (data.destinations.length > 0) {
       cursorVisited = false;
+      busy = false;
       renderPicker(data);
-      // Long fallback timeout (15s) in case cursor never visits the picker
+      // Long fallback timeout in case the cursor never visits the picker
       scheduleAutoDismiss(15000);
     }
   } catch (e) {
@@ -32,66 +38,86 @@ async function refreshPicker() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-  // Primary: page visibility change fires when NSPanel is shown/hidden
+  hydrateIcons();
+  applyMaterial(invoke);
+  installFaviconFallback(document.getElementById("picker-list")!);
+
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      refreshPicker();
+    if (!document.hidden) refreshPicker();
+  });
+  listen("show-picker", () => refreshPicker()).catch(console.error);
+
+  document.getElementById("picker-close")!.addEventListener("click", dismissPicker);
+
+  // Keyboard works only when the panel has key focus (it is non-activating so
+  // the source app keeps focus); the mouse remains the primary path.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      dismissPicker();
+    } else if (/^[1-9]$/.test(e.key)) {
+      const dest = current[Number(e.key) - 1];
+      if (dest) pick(dest);
     }
   });
 
-  // Backup: Tauri event from backend (catches cases where visibility doesn't fire)
-  listen("show-picker", () => {
-    refreshPicker();
-  }).catch(console.error);
-
-  // Close button
-  document.getElementById("picker-close")!.addEventListener("click", dismissPicker);
-
-  // Keyboard dismiss (may not fire if picker is non-activating, close button is the primary way)
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") dismissPicker();
-  });
-
-  // Stay visible until cursor visits then leaves
   const card = document.getElementById("picker-card")!;
   card.addEventListener("mouseenter", () => {
     cursorVisited = true;
     clearAutoDismiss();
   });
   card.addEventListener("mouseleave", () => {
-    if (cursorVisited) {
-      dismissPicker();
-    }
+    if (cursorVisited && !busy) dismissPicker();
   });
 });
 
+function renderPreview(data: PickerData) {
+  const preview = document.getElementById("picker-preview")!;
+  const title = document.getElementById("picker-title")!;
+  if (data.kind === "image" && data.image_preview) {
+    title.textContent = "Send screenshot to…";
+    preview.innerHTML = `<img src="${data.image_preview}" alt="Screenshot preview">`;
+  } else if (data.kind === "text" && data.text) {
+    title.textContent = "Send text to…";
+    const snippet = data.text.length > 140 ? data.text.slice(0, 140) + "…" : data.text;
+    preview.innerHTML = `<p>${escapeHtml(snippet)}</p>`;
+  } else {
+    title.textContent = "Send to…";
+    preview.innerHTML = "";
+  }
+}
+
 function renderPicker(data: PickerData) {
+  renderPreview(data);
   const list = document.getElementById("picker-list")!;
   list.innerHTML = "";
+  current = data.destinations;
 
-  data.destinations.forEach((dest) => {
+  data.destinations.forEach((dest, idx) => {
     const btn = document.createElement("button");
     btn.className = "picker-btn";
-    const iconHtml = dest.icon && dest.icon.trim()
-      ? `<span class="picker-icon">${dest.icon}</span>`
-      : (() => { try { return `<img src="https://www.google.com/s2/favicons?domain=${new URL(dest.url).hostname}&sz=64" width="28" height="28" class="picker-icon-img" onerror="this.replaceWith(document.createTextNode('🌐'))">`; } catch { return `<span class="picker-icon">🌐</span>`; } })();
+    btn.setAttribute("role", "option");
+    const prefix = dest.clip_prompt?.trim();
+    btn.title = prefix ? `${dest.name} — prompt: ${prefix}` : dest.name;
     btn.innerHTML = `
-      ${iconHtml}
-      <span class="picker-name">${dest.name}</span>
+      <span class="picker-icon">${destIcon(dest, 22)}</span>
+      <span class="picker-name">${escapeHtml(dest.name)}</span>
+      ${idx < 9 ? `<kbd class="picker-key" aria-hidden="true">${idx + 1}</kbd>` : ""}
     `;
-    btn.addEventListener("click", async () => {
-      clearAutoDismiss();
-      try {
-        await invoke("pick_destination", {
-          id: dest.id,
-          text: data.text,
-        });
-      } catch (e) {
-        console.error("pick_destination failed:", e);
-      }
-    });
+    btn.addEventListener("click", () => pick(dest));
     list.appendChild(btn);
   });
+}
+
+async function pick(dest: Destination) {
+  if (busy) return;
+  busy = true;
+  clearAutoDismiss();
+  try {
+    await invoke("pick_destination", { id: dest.id });
+  } catch (e) {
+    console.error("pick_destination failed:", e);
+    busy = false;
+  }
 }
 
 function scheduleAutoDismiss(ms = 3000) {

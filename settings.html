@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
   <title>Peekabrowser Settings</title>
   <link rel="stylesheet" href="/src/settings.css" />
   <script type="module" src="/src/settings.ts" defer></script>
@@ -43,6 +44,37 @@
       </div>
     </div>
 
+    <section class="power-section">
+      <h2>Power &amp; appearance</h2>
+      <label class="toggle-row">
+        <input type="checkbox" id="opt-edge-hover" />
+        <span>
+          <strong>Show sidebar at the left screen edge</strong>
+          <small>Off: no global mouse monitoring while hidden. ⌘⇧A and the menu-bar icon still work.</small>
+        </span>
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="opt-material" />
+        <span>
+          <strong>Native window material</strong>
+          <small>Liquid Glass on macOS 26+, vibrancy on macOS 13–15. Off: solid colors. Applies after restart.</small>
+        </span>
+      </label>
+      <label class="toggle-row">
+        <span>
+          <strong>Unload hidden pages after</strong>
+          <small>Unloaded pages keep their title and URL and reload when clicked. Pages that are generating or have an unsent draft are kept.</small>
+        </span>
+        <select id="opt-unload">
+          <option value="120">2 min</option>
+          <option value="300">5 min</option>
+          <option value="600">10 min</option>
+          <option value="1800">30 min</option>
+        </select>
+      </label>
+      <p class="hint" id="diagnostics"></p>
+    </section>
+
     <section class="shortcuts-section">
       <h2>Keyboard Shortcuts</h2>
       <p class="hint">Click on a shortcut to change it, then press a new key combination.</p>
@@ -57,7 +89,7 @@
       </div>
       <div class="shortcut-row" data-action="export">
         <kbd class="shortcut-key" tabindex="0"></kbd>
-        <span>Copy last AI response</span>
+        <span>Save answer from the current page</span>
       </div>
 
       <div class="shortcut-divider"></div>

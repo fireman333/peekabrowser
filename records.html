@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Peekabrowser Records</title>
+  <link rel="stylesheet" href="/src/records.css" />
+  <script type="module" src="/src/records.ts" defer></script>
+</head>
+<body>
+  <div id="records-app">
+    <aside id="list-pane">
+      <div id="toolbar">
+        <input id="search" type="search" placeholder="Search text, prompts, answers, notes…" aria-label="Search records" autocomplete="off" />
+        <label class="fav-filter" title="Favorites only">
+          <input type="checkbox" id="fav-only" /> <span data-icon="star"></span>
+        </label>
+      </div>
+      <ul id="record-list" role="listbox" aria-label="Records"></ul>
+    </aside>
+    <main id="detail" aria-live="polite"></main>
+  </div>
+</body>
+</html>

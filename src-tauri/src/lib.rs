@@ -1,45 +1,26 @@
+pub mod activity;
+pub mod app_settings;
 pub mod commands;
+pub mod delivery;
 pub mod destinations;
-pub mod export;
 pub mod hotkeys;
+pub mod lifecycle;
+pub mod native;
 pub mod panel;
 pub mod permissions;
+pub mod records;
 pub mod screenshot;
 pub mod tray;
 pub mod webviews;
 
-use tauri::{Emitter, Manager};
-
-/// Disable App Nap so macOS won't throttle our background WKWebView processes.
-/// This prevents SSE streaming connections from being interrupted.
-#[cfg(target_os = "macos")]
-fn disable_app_nap() {
-    use objc::{msg_send, sel, sel_impl};
-    use objc::runtime::Object;
-    unsafe {
-        let cls = objc::runtime::Class::get("NSProcessInfo").unwrap();
-        let info: *mut Object = msg_send![cls, processInfo];
-        // NSActivityUserInitiatedAllowingIdleSystemSleep = 0x00FFFFFFULL
-        // This disables App Nap + sudden termination + automatic termination
-        let reason = {
-            let ns_str_cls = objc::runtime::Class::get("NSString").unwrap();
-            let s = b"Keeping WKWebView SSE connections alive\0";
-            let raw: *mut Object = msg_send![ns_str_cls,
-                stringWithUTF8String: s.as_ptr() as *const std::os::raw::c_char];
-            raw
-        };
-        let options: u64 = 0x00FFFFFF;
-        let _activity: *mut Object = msg_send![info, beginActivityWithOptions: options reason: reason];
-        // We intentionally never call endActivity — keep alive for app lifetime
-    }
-}
+use tauri::Manager;
 
 use destinations::DestinationManager;
 use hotkeys::shortcut_store::ShortcutStore;
 use webviews::WebViewTabManager;
 
-/// Holds the clipboard text captured on double Cmd+C, for the picker popup to retrieve
-pub struct PickerState(pub std::sync::Mutex<String>);
+
+pub use delivery::PickerState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -55,6 +36,8 @@ pub fn run() {
         std::path::PathBuf::from(".")
     };
 
+    let records_dir = app_data_dir.clone();
+
     tauri::Builder::default()
         .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -62,11 +45,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(DestinationManager::new(app_data_dir.clone()))
-        .manage(ShortcutStore::new(app_data_dir))
+        .manage(ShortcutStore::new(app_data_dir.clone()))
+        .manage(app_settings::AppSettingsStore::new(app_data_dir.clone()))
         .manage(std::sync::Mutex::new(WebViewTabManager::new()))
-        .manage(PickerState(std::sync::Mutex::new(String::new())))
+        .manage(PickerState(std::sync::Mutex::new(Default::default())))
         .manage(commands::SystemConfigState::new())
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
 
             // Set as accessory app (no dock icon)
@@ -74,10 +58,16 @@ pub fn run() {
             {
                 use tauri::ActivationPolicy;
                 app.set_activation_policy(ActivationPolicy::Accessory);
+                // No app-lifetime App Nap opt-out: activity tokens are held only
+                // while a user-requested generation runs (see activity.rs).
+            }
 
-                // Disable App Nap to prevent macOS from throttling WKWebView
-                // network processes, which causes SSE streaming disconnections.
-                disable_app_nap();
+            // Local query records (SQLite). The app keeps working without them.
+            match records::RecordStore::open(&records_dir) {
+                Ok(store) => {
+                    app.manage(store);
+                }
+                Err(e) => log::warn!("records unavailable: {}", e),
             }
 
             // Create the sidebar NSPanel
@@ -139,6 +129,19 @@ pub fn run() {
             commands::create_system_item,
             commands::close_system_config,
             commands::run_ocr,
+            commands::save_answer,
+            commands::list_records,
+            commands::update_record,
+            commands::delete_record,
+            commands::get_record_attachment,
+            commands::copy_record_markdown,
+            commands::export_record_markdown,
+            commands::open_record,
+            commands::open_records_window,
+            commands::get_app_settings,
+            commands::save_app_settings,
+            commands::get_diagnostics,
+            commands::get_material_kind,
         ])
         // Prevent page panel window close from exiting the app.
         // Settings window is allowed to close normally.
@@ -146,48 +149,18 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let label = window.label();
                 // Allow settings/system-config windows and intentionally-closing pages
-                if label != "settings-window" && label != "system-config"
+                if label != "settings-window" && label != "system-config" && label != "records-window"
                     && !panel::is_page_closing(label)
                 {
                     api.prevent_close();
-                    // If a page viewer requested close (e.g. Cmd+W from page),
-                    // perform cleanup via close_page logic
+                    // A page viewer requested close (e.g. Cmd+W): close that page.
                     if label.starts_with("page-") {
                         let app = window.app_handle().clone();
                         let label_owned = label.to_string();
-                        // Find the page_id from the label and close it
-                        let tab_mgr = app.state::<std::sync::Mutex<webviews::WebViewTabManager>>();
-                        let (removed_label, next_active_label) = {
-                            let mut mgr = match tab_mgr.lock() {
-                                Ok(m) => m,
-                                Err(_) => return,
-                            };
-                            // Find page_id by label
-                            let page_id = mgr.get_all_pages().iter()
-                                .find(|p| p.label == label_owned)
-                                .map(|p| p.id.clone());
-                            if let Some(pid) = page_id {
-                                let removed = mgr.remove_page(&pid).map(|p| p.label);
-                                let next = mgr.get_active_page().map(|p| p.label.clone());
-                                let pages = mgr.get_all_pages();
-                                let active_id = mgr.active_page_id.clone();
-                                if let Some(sidebar) = app.get_webview_window(panel::SIDEBAR_LABEL) {
-                                    let _ = sidebar.emit("pages-updated", &pages);
-                                    if let Some(ref aid) = active_id {
-                                        let _ = sidebar.emit("active-page-changed", aid);
-                                    }
-                                }
-                                (removed, next)
-                            } else {
-                                (None, None)
-                            }
-                        };
-                        if let Some(rl) = removed_label {
-                            panel::destroy_page_panel(&app, &rl);
-                        }
-                        if let Some(nl) = next_active_label {
-                            panel::show_page_viewer(&app, &nl);
-                        }
+                        let app2 = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            lifecycle::close_page_by_label(&app2, &label_owned);
+                        });
                     }
                 }
             }

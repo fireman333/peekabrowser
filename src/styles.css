@@ -1,4 +1,4 @@
-/* Airy Sidebar - Global Styles */
+/* Peekabrowser sidebar */
 
 * {
   box-sizing: border-box;
@@ -6,17 +6,43 @@
   padding: 0;
 }
 
+/* Theme tokens: follow the system appearance. */
 :root {
+  color-scheme: light dark;
   --tab-bar-width: 56px;
-  --bg-primary: #1a1a1a;
-  --bg-secondary: #242424;
-  --bg-hover: #2e2e2e;
-  --bg-active: #3a3a3a;
-  --text-primary: #f0f0f0;
-  --text-muted: #888;
-  --accent: #4a9eff;
-  --border: rgba(255, 255, 255, 0.08);
+  --bg: #f4f4f6;
+  --bg-hover: rgba(0, 0, 0, 0.06);
+  --bg-active: rgba(0, 0, 0, 0.1);
+  --text-primary: #1d1d1f;
+  --text-muted: #6e6e73;
+  --accent: #0a84ff;
+  --accent-text: #fff;
+  --ok: #248a3d;
+  --danger: #d70015;
+  --border: rgba(0, 0, 0, 0.1);
+  --focus: rgba(10, 132, 255, 0.55);
   --radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --bg-hover: rgba(255, 255, 255, 0.08);
+    --bg-active: rgba(255, 255, 255, 0.14);
+    --text-primary: #f2f2f7;
+    --text-muted: #98989d;
+    --accent: #0a84ff;
+    --ok: #30d158;
+    --danger: #ff453a;
+    --border: rgba(255, 255, 255, 0.1);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --text-muted: currentColor;
+    --border: rgba(127, 127, 127, 0.8);
+  }
 }
 
 html, body {
@@ -33,9 +59,20 @@ html, body {
   display: flex;
   height: 100vh;
   width: 100%;
-  background: var(--bg-primary);
-  border-right: 1px solid var(--border);
+  background: var(--bg);
   overflow: hidden;
+}
+
+/* Native material (Liquid Glass / vibrancy) is behind the web view: don't
+   paint over it. Content windows (pages, records) keep solid backgrounds. */
+:root[data-material] #app {
+  background: transparent;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-material] #app {
+    background: var(--bg);
+  }
 }
 
 /* ─── Tab Bar ─────────────────────────────────────────── */
@@ -43,7 +80,6 @@ html, body {
   width: var(--tab-bar-width);
   min-width: var(--tab-bar-width);
   height: 100%;
-  background: var(--bg-secondary);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -63,17 +99,25 @@ html, body {
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;
+  padding-top: 2px;
 }
 
 #tab-actions {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
   width: 100%;
   flex-shrink: 0;
+}
+
+.action-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 100%;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
 }
 
 .tab-btn {
@@ -89,16 +133,24 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, color 0.15s, transform 0.1s;
+  transition: background 0.15s, color 0.15s;
   position: relative;
-  -webkit-app-region: no-drag;
   flex-shrink: 0;
 }
 
-.tab-btn:hover {
+.action-btn {
+  height: 30px;
+  min-height: 30px;
+}
+
+.tab-btn:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text-primary);
-  transform: scale(1.05);
+}
+
+.tab-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .tab-btn.active {
@@ -106,15 +158,29 @@ html, body {
   color: var(--text-primary);
 }
 
+button:focus {
+  outline: none;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
 .tab-favicon {
-  border-radius: 4px;
+  border-radius: 5px;
   object-fit: contain;
 }
 
-.tab-btn.active::before {
+.emoji-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.dest-btn.active::before {
   content: '';
   position: absolute;
-  left: -4px;
+  left: -8px;
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
@@ -123,27 +189,18 @@ html, body {
   border-radius: 0 2px 2px 0;
 }
 
-.tab-btn .tab-tooltip {
+/* Static marker (no looping animation) for a destination that is generating. */
+.dest-btn.generating::after {
+  content: '';
   position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
-  background: #333;
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s;
-  z-index: 100;
+  right: 3px;
+  top: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
 }
-
-.tab-btn:hover .tab-tooltip {
-  opacity: 1;
-}
-
 
 .system-separator {
   width: 24px;
@@ -152,12 +209,12 @@ html, body {
   margin: 6px auto;
 }
 
-/* ─── Page sub-tabs (numbered dots under each destination) ─── */
+/* ─── Page dots ─── */
 .page-group {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   width: 100%;
   padding: 0 4px 4px;
 }
@@ -181,20 +238,28 @@ html, body {
   align-items: center;
   justify-content: center;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
-  -webkit-app-region: no-drag;
   flex-shrink: 0;
 }
 
 .page-dot:hover {
   background: var(--bg-active);
   color: var(--text-primary);
-  border-color: var(--text-muted);
 }
 
 .page-dot.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
   border-color: var(--accent);
+}
+
+.page-dot.generating {
+  border: 2px solid var(--accent);
+}
+
+.page-dot.unloaded {
+  border-style: dashed;
+  background: transparent;
+  opacity: 0.6;
 }
 
 .page-close-btn {
@@ -205,16 +270,15 @@ html, body {
   height: 14px;
   border-radius: 50%;
   border: none;
-  background: #555;
-  color: #fff;
-  font-size: 8px;
+  background: var(--text-muted);
+  color: var(--bg);
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
   display: none;
   align-items: center;
   justify-content: center;
   padding: 0;
-  -webkit-app-region: no-drag;
   z-index: 10;
 }
 
@@ -223,24 +287,30 @@ html, body {
 }
 
 .page-close-btn:hover {
-  background: #ff4444;
-}
-
-.action-btn {
-  font-size: 16px;
-  color: var(--text-muted);
+  background: var(--danger);
+  color: #fff;
 }
 
 #pin-btn.pinned {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.15);
-  border-radius: 6px;
+  color: #d97706;
+  background: rgba(251, 191, 36, 0.18);
+}
+
+.flash-ok {
+  color: var(--ok) !important;
+  background: color-mix(in srgb, var(--ok) 15%, transparent) !important;
+}
+
+.flash-error {
+  color: var(--danger) !important;
+  background: color-mix(in srgb, var(--danger) 15%, transparent) !important;
 }
 
 #width-controls {
   display: flex;
   gap: 1px;
   padding: 2px 4px 0;
+  width: 100%;
 }
 
 .width-btn {
@@ -254,7 +324,6 @@ html, body {
   font-size: 10px;
   font-weight: 600;
   transition: background 0.15s, color 0.15s;
-  -webkit-app-region: no-drag;
 }
 
 .width-btn:hover {
@@ -264,103 +333,36 @@ html, body {
 
 .width-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
 }
-
-/* ─── Content Area ────────────────────────────────────── */
-#content-area {
-  flex: 1;
-  height: 100%;
-  position: relative;
-  overflow: hidden;
-}
-
-/* ─── Welcome Screen ──────────────────────────────────── */
-#welcome-screen {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-.welcome-inner {
-  text-align: center;
-  max-width: 260px;
-}
-
-.welcome-logo {
-  font-size: 48px;
-  margin-bottom: 12px;
-}
-
-.welcome-inner h2 {
-  font-size: 22px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.welcome-inner p {
-  color: var(--text-muted);
-  margin-bottom: 24px;
-  line-height: 1.5;
-}
-
-.quick-tips {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  text-align: left;
-  background: var(--bg-secondary);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-}
-
-.tip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.tip kbd,
-.tip .tip-icon {
-  background: var(--bg-active);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-family: monospace;
-  color: var(--text-primary);
-  white-space: nowrap;
-  min-width: 70px;
-  text-align: center;
-}
-
 
 /* ─── Utilities ───────────────────────────────────────── */
 .hidden {
   display: none !important;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
 /* ─── Scrollbar ───────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 3px;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
-}
-
-/* Tab list scrollbar: only visible on hover */
-#tab-list::-webkit-scrollbar {
-  width: 3px;
 }
 
 #tab-list::-webkit-scrollbar-thumb {
@@ -369,6 +371,5 @@ html, body {
 }
 
 #tab-list:hover::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border);
 }
-

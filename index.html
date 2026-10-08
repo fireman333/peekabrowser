@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Peekabrowser</title>
     <link rel="stylesheet" href="/src/styles.css" />
     <script>document.addEventListener('contextmenu', e => e.preventDefault());</script>
@@ -10,54 +11,40 @@
   </head>
   <body>
     <div id="app">
-      <!-- Tab bar (left column, 56px) -->
-      <nav id="tab-bar">
-        <div id="tab-list"></div>
+      <nav id="tab-bar" aria-label="Destinations and pages">
+        <div id="tab-list" role="list"></div>
+
         <div id="tab-actions">
-          <button class="tab-btn action-btn" id="pin-btn" title="Pin (prevent auto-hide)">📌</button>
-          <button class="tab-btn action-btn" id="new-tab-btn" title="New Tab (⌘N)">+</button>
-          <button class="tab-btn action-btn" id="back-btn" title="Back (⌘[)">◀</button>
-          <button class="tab-btn action-btn" id="forward-btn" title="Forward (⌘])">▶</button>
-          <button class="tab-btn action-btn" id="open-browser-btn" title="Open in Browser">↗</button>
-          <button class="tab-btn action-btn" id="reload-btn" title="Reload (⌘R)">↻</button>
-          <button class="tab-btn action-btn" id="settings-btn" title="Settings">⚙</button>
-          <div id="width-controls">
-            <button class="width-btn" data-width="short" title="Narrow">S</button>
-            <button class="width-btn active" data-width="medium" title="Medium">M</button>
-            <button class="width-btn" data-width="long" title="Wide">L</button>
+          <!-- Query actions -->
+          <div class="action-group" role="group" aria-label="Answer">
+            <button class="tab-btn action-btn" id="save-btn" data-icon="save" aria-label="Save answer (⌘⇧E)" title="Save answer (⌘⇧E)"></button>
+            <button class="tab-btn action-btn" id="records-btn" data-icon="records" aria-label="Records" title="Records"></button>
+          </div>
+          <!-- Navigation -->
+          <div class="action-group" role="group" aria-label="Navigation">
+            <button class="tab-btn action-btn" id="back-btn" data-icon="back" aria-label="Back (⌘[)" title="Back (⌘[)"></button>
+            <button class="tab-btn action-btn" id="forward-btn" data-icon="forward" aria-label="Forward (⌘])" title="Forward (⌘])"></button>
+            <button class="tab-btn action-btn" id="reload-btn" data-icon="reload" aria-label="Reload (⌘R)" title="Reload (⌘R)"></button>
+          </div>
+          <!-- Secondary, collapsed by default -->
+          <div class="action-group hidden" id="more-group" role="group" aria-label="More actions">
+            <button class="tab-btn action-btn" id="new-tab-btn" data-icon="plus" aria-label="New tab (⌘N)" title="New tab (⌘N)"></button>
+            <button class="tab-btn action-btn" id="capture-btn" data-icon="capture" aria-label="Screenshot to AI (⌘⇧S)" title="Screenshot to AI (⌘⇧S)"></button>
+            <button class="tab-btn action-btn" id="open-browser-btn" data-icon="external" aria-label="Open in browser" title="Open in browser"></button>
+            <div id="width-controls" role="radiogroup" aria-label="Panel size">
+              <button class="width-btn" role="radio" data-width="short" aria-label="Narrow" title="Narrow">窄</button>
+              <button class="width-btn active" role="radio" aria-checked="true" data-width="medium" aria-label="Medium" title="Medium">中</button>
+              <button class="width-btn" role="radio" data-width="long" aria-label="Wide" title="Wide">寬</button>
+            </div>
+          </div>
+          <div class="action-group" role="group" aria-label="Window">
+            <button class="tab-btn action-btn" id="more-btn" data-icon="more" aria-label="More" aria-expanded="false" aria-controls="more-group" title="More"></button>
+            <button class="tab-btn action-btn" id="pin-btn" data-icon="pin" aria-label="Pin (keep open)" aria-pressed="false" title="Pin (keep open)"></button>
+            <button class="tab-btn action-btn" id="settings-btn" data-icon="settings" aria-label="Settings" title="Settings"></button>
           </div>
         </div>
       </nav>
-
-      <!-- Content area (fills remaining width) -->
-      <main id="content-area">
-        <!-- Welcome screen (shown when no tab selected) -->
-        <div id="welcome-screen">
-          <div class="welcome-inner">
-            <div class="welcome-logo">🌊</div>
-            <h2>Peekabrowser</h2>
-            <p>Select a destination from the left to get started</p>
-            <div class="quick-tips">
-              <div class="tip">
-                <kbd>⌘⇧A</kbd>
-                <span>Toggle sidebar</span>
-              </div>
-              <div class="tip">
-                <span class="tip-icon">⌘C ⌘C</span>
-                <span>Send clipboard to active destination</span>
-              </div>
-              <div class="tip">
-                <kbd>⌘⇧S</kbd>
-                <span>Screenshot to AI</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </main>
+      <div id="status-live" class="visually-hidden" role="status" aria-live="polite"></div>
     </div>
-
-    <!-- Toast notification -->
-    <div id="copy-toast"></div>
   </body>
 </html>

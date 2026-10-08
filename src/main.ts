@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { applyMaterial, destIcon, hydrateIcons, installFaviconFallback } from "./icons";
 
 interface Destination {
   id: string;
@@ -9,12 +10,19 @@ interface Destination {
   order: number;
 }
 
+type PageState = "active" | "background" | "unloaded";
+
 interface PageInfo {
   id: string;
   dest_id: string;
   dest_name: string;
   dest_icon: string;
-  label: string;
+  label: string | null;
+  state: PageState;
+  generating: boolean;
+  title: string;
+  url: string;
+  query_id: string | null;
 }
 
 // ─── State ──────────────────────────────────────────────
@@ -22,45 +30,13 @@ let destinations: Destination[] = [];
 let pages: PageInfo[] = [];
 let activePageId: string | null = null;
 
-const DEFAULT_DESTINATIONS: Destination[] = [
-  { id: "google", name: "Google", url: "https://www.google.com", icon: "", order: 0 },
-  { id: "chatgpt", name: "ChatGPT", url: "https://chat.openai.com", icon: "", order: 1 },
-  { id: "claude", name: "Claude", url: "https://claude.ai", icon: "", order: 2 },
-  { id: "gemini", name: "Gemini", url: "https://gemini.google.com", icon: "", order: 3 },
-  { id: "perplexity", name: "Perplexity", url: "https://www.perplexity.ai", icon: "", order: 4 },
-];
-
-
-/** Get favicon URL for a destination. Returns Google's favicon service URL. */
-function faviconUrl(url: string, size = 64): string {
-  try {
-    const domain = new URL(url).hostname;
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=${size}`;
-  } catch {
-    return "";
-  }
-}
-
-/** Render an icon element: if emoji is set use it, otherwise use website favicon */
-function renderIcon(dest: { icon: string; url: string }, size = 24): string {
-  // If icon is non-empty, use the emoji directly
-  if (dest.icon && dest.icon.trim()) {
-    return `<span>${dest.icon}</span>`;
-  }
-  // No emoji set — use favicon from the website
-  const fav = faviconUrl(dest.url, size * 2); // 2x for retina
-  if (fav) {
-    return `<img src="${fav}" width="${size}" height="${size}" class="tab-favicon" onerror="this.replaceWith(document.createTextNode('🌐'))" alt="">`;
-  }
-  return `<span>🌐</span>`;
-}
-
-// ─── DOM refs ───────────────────────────────────────────
 const tabList = document.getElementById("tab-list")!;
-const settingsBtn = document.getElementById("settings-btn")!;
+const statusLive = document.getElementById("status-live")!;
 
-// ─── Init ───────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async () => {
+  hydrateIcons();
+  installFaviconFallback(tabList);
+  applyMaterial(invoke);
   await loadDestinations();
   await loadPages();
   setupEventListeners();
@@ -71,7 +47,7 @@ async function loadDestinations() {
   try {
     destinations = await invoke<Destination[]>("get_destinations");
   } catch (_e) {
-    destinations = DEFAULT_DESTINATIONS;
+    destinations = [];
   }
   renderTabBar();
 }
@@ -101,24 +77,41 @@ function renderTabBar() {
   if (systemDests.length > 0 && regularDests.length > 0) {
     const sep = document.createElement("div");
     sep.className = "system-separator";
+    sep.setAttribute("role", "separator");
     tabList.appendChild(sep);
   }
-
   systemDests.forEach((dest) => renderDestItem(dest));
+  updateActionStates();
+}
+
+function pageLabel(page: PageInfo, idx: number): string {
+  const title = page.title?.trim() || `${page.dest_name} #${idx + 1}`;
+  const state = page.generating
+    ? "generating"
+    : page.state === "unloaded"
+      ? "unloaded — click to restore"
+      : page.id === activePageId
+        ? "current"
+        : "idle";
+  return `${title} (${state})`;
 }
 
 function renderDestItem(dest: Destination) {
   const btn = document.createElement("button");
-  btn.className = "tab-btn";
+  btn.className = "tab-btn dest-btn";
+  btn.setAttribute("role", "listitem");
   const destPages = pages.filter((p) => p.dest_id === dest.id);
   const hasActivePage = destPages.some((p) => p.id === activePageId);
-  if (hasActivePage) btn.classList.add("active");
+  if (hasActivePage) {
+    btn.classList.add("active");
+    btn.setAttribute("aria-current", "page");
+  }
+  if (destPages.some((p) => p.generating)) btn.classList.add("generating");
 
   btn.dataset.id = dest.id;
-  btn.innerHTML = `
-    ${renderIcon(dest)}
-    <span class="tab-tooltip">${dest.name}</span>
-  `;
+  btn.title = dest.name;
+  btn.setAttribute("aria-label", destPages.length ? `${dest.name}, ${destPages.length} page(s)` : dest.name);
+  btn.innerHTML = destIcon(dest);
   btn.addEventListener("click", () => {
     if (dest.url.includes("system://calendar")) {
       invoke("open_system_app", { appName: "Calendar" });
@@ -128,60 +121,62 @@ function renderDestItem(dest: Destination) {
       invoke("open_system_app", { appName: "Reminders" });
       return;
     }
-    switchDestination(dest.id);
+    invoke("switch_destination", { id: dest.id }).catch(() => {});
   });
-
   tabList.appendChild(btn);
 
-  // Page sub-tabs
-  if (destPages.length > 0) {
-    const pageGroup = document.createElement("div");
-    pageGroup.className = "page-group";
-    destPages.forEach((page, idx) => {
-      const dotWrap = document.createElement("div");
-      dotWrap.className = "page-dot-wrap";
+  if (destPages.length === 0) return;
+  const pageGroup = document.createElement("div");
+  pageGroup.className = "page-group";
+  pageGroup.setAttribute("role", "group");
+  pageGroup.setAttribute("aria-label", `${dest.name} pages`);
+  destPages.forEach((page, idx) => {
+    const wrap = document.createElement("div");
+    wrap.className = "page-dot-wrap";
 
-      const dot = document.createElement("button");
-      dot.className = "page-dot" + (page.id === activePageId ? " active" : "");
-      dot.textContent = String(idx + 1);
-      dot.title = `${page.dest_name} #${idx + 1}`;
-      dot.addEventListener("click", (e) => {
-        e.stopPropagation();
-        switchPage(page.id);
-      });
-      dot.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        closePage(page.id);
-      });
-
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "page-close-btn";
-      closeBtn.textContent = "✕";
-      closeBtn.title = "Close tab";
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closePage(page.id);
-      });
-
-      dotWrap.appendChild(dot);
-      dotWrap.appendChild(closeBtn);
-      pageGroup.appendChild(dotWrap);
+    const dot = document.createElement("button");
+    const classes = ["page-dot"];
+    if (page.id === activePageId) classes.push("active");
+    if (page.state === "unloaded") classes.push("unloaded");
+    if (page.generating) classes.push("generating");
+    dot.className = classes.join(" ");
+    dot.textContent = String(idx + 1);
+    const label = pageLabel(page, idx);
+    dot.title = label;
+    dot.setAttribute("aria-label", label);
+    if (page.id === activePageId) dot.setAttribute("aria-current", "page");
+    dot.addEventListener("click", (e) => {
+      e.stopPropagation();
+      invoke("switch_page", { pageId: page.id }).catch(() => {});
     });
-    tabList.appendChild(pageGroup);
-  }
-}
+    dot.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closePage(page.id);
+    });
+    dot.addEventListener("keydown", (e) => {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        closePage(page.id);
+      }
+    });
 
-async function switchDestination(id: string) {
-  try {
-    await invoke("switch_destination", { id });
-  } catch (_e) {}
-}
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "page-close-btn";
+    closeBtn.innerHTML = "×";
+    closeBtn.title = "Close page";
+    closeBtn.setAttribute("aria-label", `Close ${page.title || page.dest_name}`);
+    closeBtn.tabIndex = -1; // Delete on the focused dot closes it from the keyboard
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closePage(page.id);
+    });
 
-async function switchPage(pageId: string) {
-  try {
-    await invoke("switch_page", { pageId });
-  } catch (_e) {}
+    wrap.appendChild(dot);
+    wrap.appendChild(closeBtn);
+    pageGroup.appendChild(wrap);
+  });
+  tabList.appendChild(pageGroup);
 }
 
 async function closePage(pageId: string) {
@@ -190,109 +185,140 @@ async function closePage(pageId: string) {
   } catch (_e) {}
 }
 
-// ─── Event listeners ─────────────────────────────────────
-function setupEventListeners() {
-  settingsBtn.addEventListener("click", async () => {
-    try { await invoke("open_settings_window"); } catch (_e) {}
-  });
-  // Pin button — toggle auto-hide
-  const pinBtn = document.getElementById("pin-btn");
-  if (pinBtn) {
-    // Initialize pin state
-    invoke<boolean>("is_pinned").then((pinned) => {
-      pinBtn.classList.toggle("pinned", pinned);
-    }).catch(() => {});
+/** Disable actions that need a loaded page. */
+function updateActionStates() {
+  const active = pages.find((p) => p.id === activePageId);
+  const loaded = !!active && active.state !== "unloaded";
+  for (const id of ["save-btn", "back-btn", "forward-btn", "reload-btn", "open-browser-btn", "new-tab-btn"]) {
+    const el = document.getElementById(id) as HTMLButtonElement | null;
+    if (el) el.disabled = id === "new-tab-btn" ? !active : !loaded;
+  }
+}
 
-    pinBtn.addEventListener("click", async () => {
-      try {
-        const pinned = await invoke<boolean>("toggle_pin");
-        pinBtn.classList.toggle("pinned", pinned);
-      } catch (_e) {}
-    });
-  }
-  // New tab button
-  document.getElementById("new-tab-btn")?.addEventListener("click", async () => {
+function flash(el: HTMLElement | null, kind: "ok" | "error") {
+  if (!el) return;
+  el.classList.remove("flash-ok", "flash-error");
+  void el.offsetWidth;
+  el.classList.add(kind === "ok" ? "flash-ok" : "flash-error");
+  setTimeout(() => el.classList.remove("flash-ok", "flash-error"), 1600);
+}
+
+function announce(msg: string) {
+  statusLive.textContent = msg;
+}
+
+// ─── Event listeners ─────────────────────────────────────
+function on(id: string, fn: () => void) {
+  document.getElementById(id)?.addEventListener("click", fn);
+}
+
+function setupEventListeners() {
+  on("settings-btn", () => invoke("open_settings_window").catch(() => {}));
+  on("records-btn", () => invoke("open_records_window").catch(() => {}));
+  on("back-btn", () => invoke("go_back").catch(() => {}));
+  on("forward-btn", () => invoke("go_forward").catch(() => {}));
+  on("reload-btn", () => invoke("reload_active_page").catch(() => {}));
+  on("open-browser-btn", () => invoke("open_active_in_browser").catch(() => {}));
+  on("capture-btn", () => invoke("take_screenshot").catch(() => {}));
+  on("new-tab-btn", () => {
     const activePage = pages.find((p) => p.id === activePageId);
-    if (activePage) {
-      try { await invoke("new_tab", { id: activePage.dest_id }); } catch (_e) {}
+    if (activePage) invoke("new_tab", { id: activePage.dest_id }).catch(() => {});
+  });
+
+  const saveBtn = document.getElementById("save-btn");
+  on("save-btn", async () => {
+    try {
+      const r = await invoke<{ capture_status: string }>("save_answer");
+      const msg = r.capture_status === "partial" ? "Saved (still generating)" : "Answer saved";
+      saveBtn!.title = msg;
+      announce(msg);
+      flash(saveBtn, "ok");
+    } catch (e) {
+      const msg = String(e);
+      saveBtn!.title = msg;
+      announce(msg);
+      flash(saveBtn, "error");
     }
+    setTimeout(() => (saveBtn!.title = "Save answer (⌘⇧E)"), 4000);
   });
-  // Back / Forward buttons
-  document.getElementById("back-btn")?.addEventListener("click", async () => {
-    try { await invoke("go_back"); } catch (_e) {}
+
+  const moreBtn = document.getElementById("more-btn")!;
+  const moreGroup = document.getElementById("more-group")!;
+  moreBtn.addEventListener("click", () => {
+    const open = moreGroup.classList.toggle("hidden") === false;
+    moreBtn.setAttribute("aria-expanded", String(open));
+    moreBtn.classList.toggle("active", open);
   });
-  document.getElementById("forward-btn")?.addEventListener("click", async () => {
-    try { await invoke("go_forward"); } catch (_e) {}
+
+  const pinBtn = document.getElementById("pin-btn")!;
+  const setPinned = (pinned: boolean) => {
+    pinBtn.classList.toggle("pinned", pinned);
+    pinBtn.setAttribute("aria-pressed", String(pinned));
+  };
+  invoke<boolean>("is_pinned").then(setPinned).catch(() => {});
+  pinBtn.addEventListener("click", async () => {
+    try {
+      setPinned(await invoke<boolean>("toggle_pin"));
+    } catch (_e) {}
   });
-  // Open in default browser button
-  document.getElementById("open-browser-btn")?.addEventListener("click", async () => {
-    try { await invoke("open_active_in_browser"); } catch (_e) {}
-  });
-  // Reload button
-  const reloadBtn = document.getElementById("reload-btn");
-  if (reloadBtn) {
-    reloadBtn.addEventListener("click", async () => {
-      try { await invoke("reload_active_page"); } catch (_e) {}
-    });
-  }
-  // Cmd+R to reload, Cmd+W to close active tab
+
   document.addEventListener("keydown", async (e) => {
-    if (e.metaKey && e.key === "r") {
+    if (!e.metaKey) return;
+    const activePage = pages.find((p) => p.id === activePageId);
+    if (e.key === "r") {
       e.preventDefault();
-      try { await invoke("reload_active_page"); } catch (_e) {}
-    } else if (e.metaKey && e.key === "w") {
+      invoke("reload_active_page").catch(() => {});
+    } else if (e.key === "w") {
       e.preventDefault();
-      if (activePageId) {
-        try { await invoke("close_page", { pageId: activePageId }); } catch (_e) {}
-      }
-    } else if (e.metaKey && e.key === "[") {
+      if (activePageId) closePage(activePageId);
+    } else if (e.key === "[") {
       e.preventDefault();
-      try { await invoke("go_back"); } catch (_e) {}
-    } else if (e.metaKey && e.key === "]") {
+      invoke("go_back").catch(() => {});
+    } else if (e.key === "]") {
       e.preventDefault();
-      try { await invoke("go_forward"); } catch (_e) {}
-    } else if (e.metaKey && e.key === "n") {
+      invoke("go_forward").catch(() => {});
+    } else if (e.key === "n") {
       e.preventDefault();
-      // Open a new tab for the active destination
-      const activePage = pages.find((p) => p.id === activePageId);
-      if (activePage) {
-        try { await invoke("new_tab", { id: activePage.dest_id }); } catch (_e) {}
-      }
+      if (activePage) invoke("new_tab", { id: activePage.dest_id }).catch(() => {});
     }
   });
-  // Width preset buttons
+
   document.querySelectorAll<HTMLButtonElement>(".width-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const preset = btn.dataset.width ?? "medium";
-      document.querySelectorAll(".width-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".width-btn").forEach((b) => {
+        b.classList.remove("active");
+        b.setAttribute("aria-checked", "false");
+      });
       btn.classList.add("active");
-      try {
-        await invoke("set_viewer_width", { preset });
-      } catch (_e) {}
+      btn.setAttribute("aria-checked", "true");
+      invoke("set_viewer_width", { preset }).catch(() => {});
     });
   });
 }
 
 // ─── Tauri event listeners ───────────────────────────────
 function setupTauriListeners() {
-  listen("open-settings", async () => {
-    try { await invoke("open_settings_window"); } catch (_e) {}
-  }).catch(() => {});
+  listen("open-settings", () => invoke("open_settings_window").catch(() => {})).catch(() => {});
 
-  // Pages updated from backend
   listen<PageInfo[]>("pages-updated", (event) => {
     pages = event.payload;
     renderTabBar();
   }).catch(() => {});
 
-  // Active page changed
   listen<string>("active-page-changed", (event) => {
-    activePageId = event.payload;
+    activePageId = event.payload || null;
     renderTabBar();
   }).catch(() => {});
 
-  // Destinations changed (from settings window)
-  listen("destinations-changed", async () => {
-    await loadDestinations();
+  listen("destinations-changed", () => loadDestinations()).catch(() => {});
+
+  listen<string>("notice", (event) => {
+    announce(event.payload);
+    const save = document.getElementById("save-btn");
+    if (save) {
+      save.title = event.payload;
+      setTimeout(() => (save.title = "Save answer (⌘⇧E)"), 4000);
+    }
   }).catch(() => {});
 }
