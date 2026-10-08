@@ -30,6 +30,10 @@ static MANUAL_SHOW_GEN: AtomicU64 = AtomicU64::new(0);
 static NEAR_EDGE: AtomicBool = AtomicBool::new(false);
 static EDGE_GEN: AtomicU64 = AtomicU64::new(0);
 static HIDE_PENDING: AtomicBool = AtomicBool::new(false);
+/// Bumped on every show; a queued hide check from before a show is discarded.
+static SHOW_GEN: AtomicU64 = AtomicU64::new(0);
+/// When the panel was last shown (ms since UNIX epoch), for the grace period.
+static SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
 
 static MONITORS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 static FALLBACK_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -42,6 +46,43 @@ const DWELL: Duration = Duration::from_millis(300);
 const EDGE_ZONE_PX: f64 = 3.0;
 const LEAVE_PADDING: f64 = 60.0;
 const HIDE_CONFIRM: Duration = Duration::from_millis(150);
+/// No auto-hide right after a show (the cursor is wherever the user was
+/// reading, e.g. far right for ⌘C ⌘C auto-send).
+const SHOW_GRACE_MS: u64 = 800;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Called whenever the panel is shown (edge or manual).
+pub fn note_shown() {
+    SHOW_GEN.fetch_add(1, Ordering::SeqCst);
+    SHOWN_AT_MS.store(now_ms(), Ordering::SeqCst);
+}
+
+/// The single auto-hide rule, used both when scheduling and when confirming.
+/// Manual show (⌘C ⌘C, auto-send, screenshot, shortcut, tray): hide only after
+/// the cursor has visited the panel and then left. Edge reveal: hide when the
+/// cursor moves well past the panel.
+fn wants_hide(cx: f64, cy: f64) -> bool {
+    if now_ms().saturating_sub(SHOWN_AT_MS.load(Ordering::SeqCst)) < SHOW_GRACE_MS {
+        return false;
+    }
+    if MANUAL_SHOW_ACTIVE.load(Ordering::Relaxed) {
+        if cursor_in_panel(cx, cy) {
+            CURSOR_HAS_VISITED.store(true, Ordering::Relaxed);
+            false
+        } else {
+            CURSOR_HAS_VISITED.load(Ordering::Relaxed)
+        }
+    } else {
+        let (left, _, right, _) = super::panel_bounds();
+        cx > right + LEAVE_PADDING || cx < left - LEAVE_PADDING
+    }
+}
 
 pub fn mark_manual_show(app: &AppHandle) {
     MANUAL_SHOW_ACTIVE.store(true, Ordering::Relaxed);
@@ -177,35 +218,22 @@ fn on_cursor(app: &AppHandle, cx: f64, cy: f64) {
     if !visible || PINNED.load(Ordering::Relaxed) {
         return;
     }
-    let should_hide = if MANUAL_SHOW_ACTIVE.load(Ordering::Relaxed) {
-        if cursor_in_panel(cx, cy) {
-            CURSOR_HAS_VISITED.store(true, Ordering::Relaxed);
-            false
-        } else {
-            CURSOR_HAS_VISITED.load(Ordering::Relaxed)
-        }
-    } else {
-        let (left, _, right, _) = super::panel_bounds();
-        cx > right + LEAVE_PADDING || cx < left - LEAVE_PADDING
-    };
-    if should_hide && !HIDE_PENDING.swap(true, Ordering::SeqCst) {
+    if wants_hide(cx, cy) && !HIDE_PENDING.swap(true, Ordering::SeqCst) {
+        let gen = SHOW_GEN.load(Ordering::SeqCst);
         let app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(HIDE_CONFIRM);
             let app2 = app.clone();
             let _ = app.run_on_main_thread(move || {
                 HIDE_PENDING.store(false, Ordering::SeqCst);
+                if SHOW_GEN.load(Ordering::SeqCst) != gen {
+                    return; // the panel was (re)shown since this check was queued
+                }
                 if PINNED.load(Ordering::Relaxed) || !super::is_panel_visible(&app2) || mouse_button_down() {
                     return; // pinned, already hidden, or dragging/selecting
                 }
                 let (x, y) = super::get_cursor_topleft_pos();
-                let still_out = if MANUAL_SHOW_ACTIVE.load(Ordering::Relaxed) {
-                    !cursor_in_panel(x, y)
-                } else {
-                    let (left, _, right, _) = super::panel_bounds();
-                    x > right + LEAVE_PADDING || x < left - LEAVE_PADDING
-                };
-                if still_out {
+                if wants_hide(x, y) {
                     clear_manual_show();
                     super::hide_panel(&app2);
                 }
