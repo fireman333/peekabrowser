@@ -28,6 +28,7 @@ type Mgr = Mutex<WebViewTabManager>;
 /// Pages whose last observed state had an unsent draft.
 static DRAFTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static MAINTENANCE_SCHEDULED: AtomicBool = AtomicBool::new(false);
+static MAINTENANCE_WAKE: (Mutex<bool>, std::sync::Condvar) = (Mutex::new(false), std::sync::Condvar::new());
 
 fn has_draft(page_id: &str) -> bool {
     DRAFTS.lock().map(|d| d.iter().any(|p| p == page_id)).unwrap_or(false)
@@ -126,6 +127,7 @@ pub fn open_new_page(app: &AppHandle, dest: &Destination) -> Result<PageInfo, St
     };
     if let Some(ev) = evicted {
         log::info!("lifecycle: page limit reached, removing {}", ev.id);
+        set_draft(&ev.id, false);
         if let Some(l) = ev.label {
             release_slot(app, &ev.id, &l);
         }
@@ -175,15 +177,26 @@ pub fn switch_destination(app: &AppHandle, dest: &Destination) -> Result<(), Str
     }
 }
 
+/// Close a page by id. A viewer slot label (`page-N`, sent by the in-page
+/// ⌘W handler) is accepted too and resolved to the page it currently shows.
 pub fn close_page(app: &AppHandle, page_id: &str) {
     let (removed, next) = {
         let mgr = app.state::<Mgr>();
         let Ok(mut mgr) = mgr.lock() else { return };
+        let page_id = if mgr.get_page(page_id).is_some() {
+            page_id.to_string()
+        } else {
+            match mgr.page_id_for_label(page_id) {
+                Some(id) => id,
+                None => return,
+            }
+        };
+        let page_id = page_id.as_str();
         let removed = mgr.remove_page(page_id);
         (removed, mgr.active_page_id.clone())
     };
-    set_draft(page_id, false);
     if let Some(p) = removed {
+        set_draft(&p.id, false);
         if let Some(l) = p.label {
             release_slot(app, &p.id, &l);
         }
@@ -204,10 +217,12 @@ pub fn close_page_by_label(app: &AppHandle, label: &str) {
 }
 
 pub fn remove_pages_for_dest(app: &AppHandle, dest_id: &str) {
-    let removed = {
+    let (removed, next) = {
         let mgr = app.state::<Mgr>();
         let Ok(mut mgr) = mgr.lock() else { return };
-        mgr.remove_pages_for_dest(dest_id)
+        let had_active = mgr.get_active_page().map(|p| p.dest_id == dest_id).unwrap_or(false);
+        let removed = mgr.remove_pages_for_dest(dest_id);
+        (removed, if had_active { mgr.active_page_id.clone() } else { None })
     };
     for p in removed {
         set_draft(&p.id, false);
@@ -215,7 +230,12 @@ pub fn remove_pages_for_dest(app: &AppHandle, dest_id: &str) {
             release_slot(app, &p.id, &l);
         }
     }
-    emit_now(app);
+    match next {
+        Some(id) => {
+            let _ = activate_page(app, &id);
+        }
+        None => emit_now(app),
+    }
 }
 
 /// Return a slot to the pool and end any work tied to the page.
@@ -241,6 +261,24 @@ pub fn unload_page(app: &AppHandle, page_id: &str) {
         release_slot(app, page_id, &l);
     }
     emit_now(app);
+}
+
+/// Unload only if the page is still hidden, not active, and in the same slot
+/// as when the maintenance check decided to unload it.
+fn unload_if_still_idle(app: &AppHandle, page_id: &str, expected_label: &str) {
+    let ok = app
+        .state::<Mgr>()
+        .lock()
+        .map(|m| {
+            m.active_page_id.as_deref() != Some(page_id)
+                && m.get_page(page_id)
+                    .map(|p| p.label.as_deref() == Some(expected_label) && p.hidden_since.is_some())
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if ok && !is_busy(page_id) {
+        unload_page(app, page_id);
+    }
 }
 
 pub fn on_panel_hidden(app: &AppHandle) {
@@ -308,6 +346,13 @@ pub fn set_page_generating(app: &AppHandle, page_id: &str, generating: bool, tit
 /// thread exists at a time; it exits when no hidden page remains loaded.
 pub fn ensure_maintenance(app: &AppHandle) {
     if MAINTENANCE_SCHEDULED.swap(true, Ordering::SeqCst) {
+        // Already scheduled: wake it so it recomputes its deadline (e.g. after
+        // the unload delay setting changed).
+        let (lock, cv) = &MAINTENANCE_WAKE;
+        if let Ok(mut w) = lock.lock() {
+            *w = true;
+            cv.notify_one();
+        }
         return;
     }
     let app = app.clone();
@@ -317,7 +362,9 @@ pub fn ensure_maintenance(app: &AppHandle) {
             let wait = app.state::<Mgr>().lock().ok().and_then(|m| m.next_due_in(Instant::now(), max_age, crate::activity::page_is_busy));
             let Some(wait) = wait else { break };
             // Small floor so a burst of protected pages can't spin.
-            std::thread::sleep(wait.max(Duration::from_secs(5)));
+            if maintenance_sleep(wait.max(Duration::from_secs(5))) {
+                continue; // woken early: recompute the deadline
+            }
 
             let due = app
                 .state::<Mgr>()
@@ -348,11 +395,35 @@ pub fn ensure_maintenance(app: &AppHandle) {
                 set_draft(&pid, false);
                 let app2 = app.clone();
                 let pid2 = pid.clone();
-                let _ = app.run_on_main_thread(move || unload_page(&app2, &pid2));
+                let _ = app.run_on_main_thread(move || unload_if_still_idle(&app2, &pid2, &label));
             }
         }
         MAINTENANCE_SCHEDULED.store(false, Ordering::SeqCst);
+        // A page may have become hidden between the last check and the store
+        // above (its ensure_maintenance saw the flag set and returned).
+        let pending = app
+            .state::<Mgr>()
+            .lock()
+            .ok()
+            .and_then(|m| m.next_due_in(Instant::now(), unload_after(&app), crate::activity::page_is_busy))
+            .is_some();
+        if pending {
+            ensure_maintenance(&app);
+        }
     });
+}
+
+/// Sleep up to `d`; returns true if woken early by `ensure_maintenance`.
+fn maintenance_sleep(d: Duration) -> bool {
+    let (lock, cv) = &MAINTENANCE_WAKE;
+    let Ok(guard) = lock.lock() else {
+        std::thread::sleep(d);
+        return false;
+    };
+    let (mut guard, _) = cv.wait_timeout_while(guard, d, |w| !*w).unwrap_or_else(|e| e.into_inner());
+    let woke = *guard;
+    *guard = false;
+    woke
 }
 
 /// Delivery target for the active page.

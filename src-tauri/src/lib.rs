@@ -149,7 +149,7 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let label = window.label();
                 // Allow settings/system-config windows and intentionally-closing pages
-                if label != "settings-window" && label != "system-config"
+                if label != "settings-window" && label != "system-config" && label != "records-window"
                     && !panel::is_page_closing(label)
                 {
                     api.prevent_close();

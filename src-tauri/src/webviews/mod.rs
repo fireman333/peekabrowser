@@ -291,6 +291,9 @@ impl WebViewTabManager {
         if let Some(ref active_id) = self.active_page_id {
             if !self.pages.iter().any(|p| &p.id == active_id) {
                 self.active_page_id = self.pages.last().map(|p| p.id.clone());
+                if let Some(id) = self.active_page_id.clone() {
+                    self.set_active(&id);
+                }
             }
         }
         removed
