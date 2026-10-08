@@ -709,8 +709,14 @@ pub fn show_panel(app: &AppHandle) {
     show_panel_inner(app);
 }
 
+/// Whether the panel is shown. Tracked explicitly instead of inferred from the
+/// window position (the sidebar starts at a negative x that looked "visible").
+static PANEL_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Shared panel display logic (used by both show_panel and show_panel_from_edge)
 fn show_panel_inner(app: &AppHandle) {
+    PANEL_SHOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+    hover_detector::note_shown();
     let sx = current_screen_x();
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
@@ -750,6 +756,7 @@ fn show_panel_inner(app: &AppHandle) {
 
 /// Hide sidebar + all page viewers, freezing all tabs to save memory/CPU
 pub fn hide_panel(app: &AppHandle) {
+    PANEL_SHOWN.store(false, std::sync::atomic::Ordering::SeqCst);
     // Clear manual show state so next show starts fresh
     hover_detector::clear_manual_show();
 
@@ -788,15 +795,8 @@ pub fn toggle_panel(app: &AppHandle) {
 }
 
 /// Check if sidebar is visible (not hidden off-screen)
-pub fn is_panel_visible(app: &AppHandle) -> bool {
-    if let Some(w) = app.get_webview_window(SIDEBAR_LABEL) {
-        if let Ok(pos) = w.outer_position() {
-            // Hidden panels are at x=-9999; visible ones are at a real screen position
-            return pos.x > -5000;
-        }
-        return w.is_visible().unwrap_or(false);
-    }
-    false
+pub fn is_panel_visible(_app: &AppHandle) -> bool {
+    PANEL_SHOWN.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Navigate the active page viewer to a URL
