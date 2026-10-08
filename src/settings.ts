@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { escapeHtml } from "./icons";
+import { applyI18n, getLang, initI18n, normalizeLang, onLangChange, setLang, t, type Lang } from "./i18n";
 
 interface Destination {
   id: string;
@@ -53,6 +55,7 @@ interface AppSettings {
   auto_send_first: boolean;
   auto_check_updates: boolean;
   auto_install_updates: boolean;
+  language: string;
 }
 
 interface UpdateInfo {
@@ -75,7 +78,7 @@ function renderUpdate(st: UpdateStatus) {
   const check = document.getElementById("update-check") as HTMLButtonElement;
   const notes = document.getElementById("update-notes")!;
   const busy = ["checking", "downloading", "installing"].includes(st.state);
-  msg.textContent = st.message || (st.state === "idle" ? "尚未檢查" : st.state);
+  msg.textContent = st.message || (st.state === "idle" ? t("upd.notChecked") : st.state);
   msg.className = st.state === "error" ? "error" : st.state === "available" ? "available" : "";
   check.disabled = busy;
   const available = !!st.info?.available && !busy;
@@ -88,12 +91,16 @@ function renderUpdate(st: UpdateStatus) {
   }
 }
 
+let lastUpdate: UpdateStatus | null = null;
+
 async function setupUpdates() {
+  const show = (st: UpdateStatus) => { lastUpdate = st; renderUpdate(st); };
+  onLangChange(() => { if (lastUpdate) renderUpdate(lastUpdate); });
   try {
     document.getElementById("app-version")!.textContent = "v" + (await invoke<string>("get_app_version"));
-    renderUpdate(await invoke<UpdateStatus>("get_update_status"));
+    show(await invoke<UpdateStatus>("get_update_status"));
   } catch (_e) {}
-  listen<UpdateStatus>("update-status", (e) => renderUpdate(e.payload)).catch(() => {});
+  listen<UpdateStatus>("update-status", (e) => show(e.payload)).catch(() => {});
   document.getElementById("update-check")!.addEventListener("click", async () => {
     try { await invoke("check_for_updates"); } catch (_e) { /* status event shows the error */ }
   });
@@ -101,7 +108,7 @@ async function setupUpdates() {
     try {
       await invoke("install_update");
     } catch (e) {
-      if (confirm(`${e}\n\n要改到下載頁面手動更新嗎？`)) invoke("open_release_page").catch(() => {});
+      if (confirm(`${e}\n\n${t("upd.manualPrompt")}`)) invoke("open_release_page").catch(() => {});
     }
   });
 }
@@ -121,6 +128,7 @@ async function setupPowerSettings() {
   const autoFirst = document.getElementById("opt-auto-first") as HTMLInputElement;
   const autoCheck = document.getElementById("opt-auto-check") as HTMLInputElement;
   const autoInstall = document.getElementById("opt-auto-install") as HTMLInputElement;
+  const language = document.getElementById("opt-language") as HTMLSelectElement;
   let current: AppSettings;
   try {
     current = await invoke<AppSettings>("get_app_settings");
@@ -133,16 +141,19 @@ async function setupPowerSettings() {
   autoCheck.checked = current.auto_check_updates;
   autoInstall.checked = current.auto_install_updates;
   autoInstall.disabled = !autoCheck.checked;
+  language.value = getLang();
   unload.value = String(current.background_unload_secs);
   if (!unload.value) unload.value = "300";
   const save = async () => {
     current = {
+      ...current,
       edge_hover_enabled: edge.checked,
       native_material: material.checked,
       background_unload_secs: Number(unload.value) || 300,
       auto_send_first: autoFirst.checked,
       auto_check_updates: autoCheck.checked,
       auto_install_updates: autoInstall.checked,
+      language: normalizeLang(language.value),
     };
     autoInstall.disabled = !autoCheck.checked;
     try { await invoke("save_app_settings", { settings: current }); } catch (_e) {}
@@ -153,23 +164,82 @@ async function setupPowerSettings() {
   autoFirst.addEventListener("change", save);
   autoCheck.addEventListener("change", save);
   autoInstall.addEventListener("change", save);
+  language.addEventListener("change", async () => {
+    setLang(normalizeLang(language.value) as Lang);
+    await save();
+  });
+  // Another window (or a restart) may change the language; keep the picker in sync.
+  onLangChange((l) => { language.value = l; });
 
   const diag = document.getElementById("diagnostics")!;
+  let last: Diagnostics | null = null;
+  const render = () => {
+    if (!last) return;
+    const d = last;
+    diag.textContent = [
+      t("diag.status", { loaded: d.loaded_pages, total: d.total_pages }),
+      d.activity_work ? t("diag.activity", { n: d.activity_work }) : t("diag.noActivity"),
+      t("diag.material", { m: d.system_glass ? "Liquid Glass" : t("diag.vibrancy") }),
+      d.accessibility_trusted ? t("diag.keyTriggered") : t("diag.sampling"),
+    ].join(" · ");
+  };
   const refresh = async () => {
     try {
-      const d = await invoke<Diagnostics>("get_diagnostics");
-      diag.textContent =
-        `Status: ${d.loaded_pages}/${d.total_pages} pages loaded · ` +
-        `${d.activity_work ? `${d.activity_work} generation(s) keeping the app awake` : "no activity token held"} · ` +
-        `material: ${d.system_glass ? "Liquid Glass" : "vibrancy"} · ` +
-        `⌘C⌘C: ${d.accessibility_trusted ? "key-triggered" : "adaptive sampling (grant Accessibility for key-triggered)"}`;
+      last = await invoke<Diagnostics>("get_diagnostics");
+      render();
     } catch (_e) {}
   };
+  onLangChange(render);
   refresh();
   setInterval(() => { if (!document.hidden) refresh(); }, 5000);
 }
 
+/** Texts that are built in code rather than marked up with data-i18n. */
+function applyDynamicTexts() {
+  document.querySelectorAll<HTMLOptionElement>("#opt-unload option[data-min]").forEach((o) => {
+    o.textContent = t("power.min", { n: o.dataset.min! });
+  });
+  const formTitle = document.getElementById("form-title");
+  if (formTitle) formTitle.textContent = t(editingId ? "dest.editTitle" : "dest.addTitle");
+  saveBtn.textContent = t(editingId ? "common.update" : "common.save");
+}
+
+// ─── Launch at login ───────────────────────────────────────
+
+async function setupAutostart() {
+  const box = document.getElementById("opt-autostart") as HTMLInputElement;
+  const sync = async () => {
+    try {
+      box.checked = await invoke<boolean>("get_autostart");
+      box.disabled = false;
+    } catch (_e) {
+      box.disabled = true;
+    }
+  };
+  await sync();
+  // Re-read the real state whenever the window comes back (System Settings may change it).
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) sync(); });
+  window.addEventListener("focus", sync);
+  box.addEventListener("change", async () => {
+    try {
+      box.checked = await invoke<boolean>("set_autostart", { enabled: box.checked });
+    } catch (e) {
+      alert(t("gen.autostartFailed") + e);
+      await sync();
+    }
+  });
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
+  await initI18n();
+  applyDynamicTexts();
+  onLangChange(() => {
+    applyDynamicTexts();
+    renderList();
+    renderPresets();
+    cancelAllRecordings();
+  });
+  setupAutostart();
   setupPowerSettings();
   setupUpdates();
   await loadDestinations();
@@ -193,6 +263,10 @@ async function loadDestinations() {
 function renderList() {
   listEl.innerHTML = "";
   const sorted = [...destinations].sort((a, b) => a.order - b.order);
+  if (sorted.length === 0) {
+    listEl.innerHTML = `<div class="dest-empty">${t("dest.empty")}</div>`;
+    return;
+  }
   sorted.forEach((d, idx) => {
     const el = document.createElement("div");
     el.className = "dest-item";
@@ -202,15 +276,15 @@ function renderList() {
     el.innerHTML = `
       <span class="icon">${iconHtml}</span>
       <div class="info">
-        <div class="name">${d.name}</div>
-        <div class="url">${d.url}</div>
+        <div class="name">${escapeHtml(d.name)}</div>
+        <div class="url">${escapeHtml(d.url)}</div>
       </div>
       <div class="reorder-btns">
-        <button class="reorder-btn up-btn" title="Move up" ${idx === 0 ? "disabled" : ""}>↑</button>
-        <button class="reorder-btn down-btn" title="Move down" ${idx === sorted.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="reorder-btn up-btn" title="${t("dest.moveUp")}" aria-label="${t("dest.moveUp")}" ${idx === 0 ? "disabled" : ""}>↑</button>
+        <button class="reorder-btn down-btn" title="${t("dest.moveDown")}" aria-label="${t("dest.moveDown")}" ${idx === sorted.length - 1 ? "disabled" : ""}>↓</button>
       </div>
-      <button class="edit-btn" title="Edit">✎</button>
-      <button class="remove-btn" title="Remove">✕</button>
+      <button class="edit-btn" title="${t("dest.edit")}" aria-label="${t("dest.edit")}">✎</button>
+      <button class="remove-btn" title="${t("dest.remove")}" aria-label="${t("dest.remove")}">✕</button>
     `;
     el.querySelector(".up-btn")!.addEventListener("click", () => moveDestination(d.id, -1));
     el.querySelector(".down-btn")!.addEventListener("click", () => moveDestination(d.id, 1));
@@ -255,10 +329,7 @@ function startEdit(d: Destination) {
   (document.getElementById("new-icon") as HTMLInputElement).value = d.icon;
   (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value = d.clip_prompt || "";
   addForm.classList.remove("hidden");
-  // Update form title and button
-  const formTitle = addForm.querySelector("h2");
-  if (formTitle) formTitle.textContent = "Edit Destination";
-  saveBtn.textContent = "Update";
+  applyDynamicTexts();
 }
 
 function renderPresets() {
@@ -282,7 +353,7 @@ function renderPresets() {
   // "+ Add" chip for custom destinations
   const addChip = document.createElement("button");
   addChip.className = "preset-chip preset-chip-add";
-  addChip.textContent = "+ Custom";
+  addChip.textContent = t("dest.custom");
   addChip.addEventListener("click", () => {
     const nameInput = document.getElementById("new-name") as HTMLInputElement;
     const urlInput = document.getElementById("new-url") as HTMLInputElement;
@@ -290,9 +361,7 @@ function renderPresets() {
     nameInput.value = "";
     urlInput.value = "";
     iconInput.value = "";
-    nameInput.placeholder = "Enter name";
-    urlInput.placeholder = "Paste URL";
-    iconInput.placeholder = "Leave empty to use website icon";
+    applyI18n(addForm);
     nameInput.focus();
   });
   presetChips.appendChild(addChip);
@@ -316,7 +385,7 @@ function setupListeners() {
     const icon = (document.getElementById("new-icon") as HTMLInputElement).value.trim();
     const clipPrompt = (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value;
     if (!name || !url) {
-      alert("Name and URL are required");
+      alert(t("dest.required"));
       return;
     }
 
@@ -339,7 +408,7 @@ function setupListeners() {
       resetForm();
       renderList();
     } catch (e) {
-      alert("Failed to save destination: " + e);
+      alert(t("dest.saveFailed") + e);
     }
   });
 }
@@ -350,9 +419,7 @@ function resetForm() {
   (document.getElementById("new-url") as HTMLInputElement).value = "";
   (document.getElementById("new-icon") as HTMLInputElement).value = "";
   (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value = "";
-  const formTitle = addForm.querySelector("h2");
-  if (formTitle) formTitle.textContent = "Add Destination";
-  saveBtn.textContent = "Save";
+  applyDynamicTexts();
 }
 
 // ─── Shortcuts ─────────────────────────────────────────────
@@ -453,7 +520,7 @@ function setupShortcutEditing() {
       // Start recording
       activeRecording = action;
       kbd.classList.add("recording");
-      kbd.textContent = "Press keys...";
+      kbd.textContent = t("keys.recording");
     });
   });
 
@@ -487,7 +554,7 @@ function setupShortcutEditing() {
     try {
       await invoke("save_shortcuts", { config: shortcuts });
     } catch (err) {
-      alert("Failed to save shortcut: " + err);
+      alert(t("keys.saveFailed") + err);
       // Reload from backend
       await loadShortcuts();
     }

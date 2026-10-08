@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant-TW">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,36 +11,36 @@
   </head>
   <body>
     <div id="app">
-      <nav id="tab-bar" aria-label="Destinations and pages">
+      <nav id="tab-bar" data-i18n-aria="side.navLabel">
         <div id="tab-list" role="list"></div>
 
         <div id="tab-actions">
           <!-- Query actions -->
-          <div class="action-group" role="group" aria-label="Answer">
-            <button class="tab-btn action-btn" id="save-btn" data-icon="save" aria-label="Save answer (⌘⇧E)" title="Save answer (⌘⇧E)"></button>
-            <button class="tab-btn action-btn" id="records-btn" data-icon="records" aria-label="Records" title="Records"></button>
+          <div class="action-group" role="group" data-i18n-aria="side.answerGroup">
+            <button class="tab-btn action-btn" id="save-btn" data-icon="save" data-i18n-aria="side.save" data-i18n-title="side.save"></button>
+            <button class="tab-btn action-btn" id="records-btn" data-icon="records" data-i18n-aria="side.records" data-i18n-title="side.records"></button>
           </div>
           <!-- Navigation -->
-          <div class="action-group" role="group" aria-label="Navigation">
-            <button class="tab-btn action-btn" id="back-btn" data-icon="back" aria-label="Back (⌘[)" title="Back (⌘[)"></button>
-            <button class="tab-btn action-btn" id="forward-btn" data-icon="forward" aria-label="Forward (⌘])" title="Forward (⌘])"></button>
-            <button class="tab-btn action-btn" id="reload-btn" data-icon="reload" aria-label="Reload (⌘R)" title="Reload (⌘R)"></button>
+          <div class="action-group" role="group" data-i18n-aria="side.navGroup">
+            <button class="tab-btn action-btn" id="back-btn" data-icon="back" data-i18n-aria="side.back" data-i18n-title="side.back"></button>
+            <button class="tab-btn action-btn" id="forward-btn" data-icon="forward" data-i18n-aria="side.forward" data-i18n-title="side.forward"></button>
+            <button class="tab-btn action-btn" id="reload-btn" data-icon="reload" data-i18n-aria="side.reload" data-i18n-title="side.reload"></button>
           </div>
           <!-- Secondary, collapsed by default -->
-          <div class="action-group hidden" id="more-group" role="group" aria-label="More actions">
-            <button class="tab-btn action-btn" id="new-tab-btn" data-icon="plus" aria-label="New tab (⌘N)" title="New tab (⌘N)"></button>
-            <button class="tab-btn action-btn" id="capture-btn" data-icon="capture" aria-label="Screenshot to AI (⌘⇧S)" title="Screenshot to AI (⌘⇧S)"></button>
-            <button class="tab-btn action-btn" id="open-browser-btn" data-icon="external" aria-label="Open in browser" title="Open in browser"></button>
-            <div id="width-controls" role="radiogroup" aria-label="Panel size">
-              <button class="width-btn" role="radio" data-width="short" aria-label="Narrow" title="Narrow">窄</button>
-              <button class="width-btn active" role="radio" aria-checked="true" data-width="medium" aria-label="Medium" title="Medium">中</button>
-              <button class="width-btn" role="radio" data-width="long" aria-label="Wide" title="Wide">寬</button>
+          <div class="action-group hidden" id="more-group" role="group" data-i18n-aria="side.moreGroup">
+            <button class="tab-btn action-btn" id="new-tab-btn" data-icon="plus" data-i18n-aria="side.newTab" data-i18n-title="side.newTab"></button>
+            <button class="tab-btn action-btn" id="capture-btn" data-icon="capture" data-i18n-aria="side.capture" data-i18n-title="side.capture"></button>
+            <button class="tab-btn action-btn" id="open-browser-btn" data-icon="external" data-i18n-aria="side.openBrowser" data-i18n-title="side.openBrowser"></button>
+            <div id="width-controls" role="radiogroup" data-i18n-aria="side.panelSize">
+              <button class="width-btn" role="radio" data-width="short" data-i18n-aria="side.narrow" data-i18n-title="side.narrow" data-i18n="side.narrowShort"></button>
+              <button class="width-btn active" role="radio" aria-checked="true" data-width="medium" data-i18n-aria="side.medium" data-i18n-title="side.medium" data-i18n="side.mediumShort"></button>
+              <button class="width-btn" role="radio" data-width="long" data-i18n-aria="side.wide" data-i18n-title="side.wide" data-i18n="side.wideShort"></button>
             </div>
           </div>
-          <div class="action-group" role="group" aria-label="Window">
-            <button class="tab-btn action-btn" id="more-btn" data-icon="more" aria-label="More" aria-expanded="false" aria-controls="more-group" title="More"></button>
-            <button class="tab-btn action-btn" id="pin-btn" data-icon="pin" aria-label="Pin (keep open)" aria-pressed="false" title="Pin (keep open)"></button>
-            <button class="tab-btn action-btn" id="settings-btn" data-icon="settings" aria-label="Settings" title="Settings"></button>
+          <div class="action-group" role="group" data-i18n-aria="side.windowGroup">
+            <button class="tab-btn action-btn" id="more-btn" data-icon="more" data-i18n-aria="side.more" aria-expanded="false" aria-controls="more-group" data-i18n-title="side.more"></button>
+            <button class="tab-btn action-btn" id="pin-btn" data-icon="pin" data-i18n-aria="side.pin" aria-pressed="false" data-i18n-title="side.pin"></button>
+            <button class="tab-btn action-btn" id="settings-btn" data-icon="settings" data-i18n-aria="side.settings" data-i18n-title="side.settings"></button>
           </div>
         </div>
       </nav>

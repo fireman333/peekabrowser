@@ -24,6 +24,8 @@ pub struct AppSettings {
     /// Install found updates automatically (only while the panel is hidden
     /// and nothing is generating); otherwise just notify.
     pub auto_install_updates: bool,
+    /// Interface language: "zh-TW" (default) or "en".
+    pub language: String,
 }
 
 impl Default for AppSettings {
@@ -35,6 +37,7 @@ impl Default for AppSettings {
             auto_send_first: false,
             auto_check_updates: true,
             auto_install_updates: false,
+            language: "zh-TW".to_string(),
         }
     }
 }
@@ -60,6 +63,7 @@ impl AppSettingsStore {
 
     pub fn update(&self, mut s: AppSettings) {
         s.background_unload_secs = s.background_unload_secs.clamp(60, 3600);
+        s.language = crate::i18n::normalize(&s.language).to_string();
         if let Ok(json) = serde_json::to_string_pretty(&s) {
             if let Some(parent) = self.path.parent() {
                 let _ = std::fs::create_dir_all(parent);

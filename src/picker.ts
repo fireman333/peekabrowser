@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { applyMaterial, destIcon, escapeHtml, hydrateIcons, installFaviconFallback } from "./icons";
+import { initI18n, onLangChange, t } from "./i18n";
 
 interface Destination {
   id: string;
@@ -22,6 +23,7 @@ let cursorVisited = false;
 // Must match PICK_KEYS in src-tauri/src/picker_keys.rs.
 const PICK_KEYS = ["C", "V", "B", "N", "M"];
 let busy = false;
+let lastData: PickerData | null = null;
 
 async function refreshPicker() {
   try {
@@ -40,6 +42,8 @@ async function refreshPicker() {
 
 window.addEventListener("DOMContentLoaded", () => {
   hydrateIcons();
+  initI18n();
+  onLangChange(() => { if (lastData) renderPicker(lastData); });
   applyMaterial(invoke);
   installFaviconFallback(document.getElementById("picker-list")!);
 
@@ -70,19 +74,20 @@ function renderPreview(data: PickerData) {
   const preview = document.getElementById("picker-preview")!;
   const title = document.getElementById("picker-title")!;
   if (data.kind === "image" && data.image_preview) {
-    title.textContent = "Send screenshot to…";
-    preview.innerHTML = `<img src="${data.image_preview}" alt="Screenshot preview">`;
+    title.textContent = t("picker.sendShot");
+    preview.innerHTML = `<img src="${data.image_preview}" alt="${t("picker.shotAlt")}">`;
   } else if (data.kind === "text" && data.text) {
-    title.textContent = "Send text to…";
+    title.textContent = t("picker.sendText");
     const snippet = data.text.length > 140 ? data.text.slice(0, 140) + "…" : data.text;
     preview.innerHTML = `<p>${escapeHtml(snippet)}</p>`;
   } else {
-    title.textContent = "Send to…";
+    title.textContent = t("picker.sendTo");
     preview.innerHTML = "";
   }
 }
 
 function renderPicker(data: PickerData) {
+  lastData = data;
   renderPreview(data);
   const list = document.getElementById("picker-list")!;
   list.innerHTML = "";
@@ -93,7 +98,7 @@ function renderPicker(data: PickerData) {
     btn.setAttribute("role", "option");
     const prefix = dest.clip_prompt?.trim();
     const key = idx < PICK_KEYS.length ? ` (${PICK_KEYS[idx]})` : "";
-    btn.title = (prefix ? `${dest.name} — prompt: ${prefix}` : dest.name) + key;
+    btn.title = (prefix ? `${dest.name} — ${t("picker.prompt")}: ${prefix}` : dest.name) + key;
     if (key) btn.setAttribute("aria-keyshortcuts", PICK_KEYS[idx]);
     btn.innerHTML = `
       <span class="picker-icon">${destIcon(dest, 22)}</span>

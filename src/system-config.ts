@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { initI18n, onLangChange, t } from "./i18n";
 
 interface SystemConfigData {
   item_type: string; // "calendar" or "reminders"
@@ -20,24 +21,27 @@ const cancelBtn = document.getElementById("cancel-btn") as HTMLButtonElement;
 let configData: SystemConfigData | null = null;
 
 window.addEventListener("DOMContentLoaded", async () => {
+  await initI18n();
+  applyTypeTexts();
+  onLangChange(applyTypeTexts);
   try {
     configData = await invoke<SystemConfigData>("get_system_config_data");
     setupUI(configData);
 
     // If OCR is needed, run it asynchronously and fill the title when done
     if (configData.needs_ocr) {
-      textInput.placeholder = "Running OCR...";
+      textInput.placeholder = t("sys.ocrRunning");
       textInput.disabled = true;
       try {
         const ocrText = await invoke<string>("run_ocr");
         if (ocrText && ocrText.trim()) {
           textInput.value = ocrText.trim();
         } else {
-          textInput.placeholder = "OCR returned empty — type manually";
+          textInput.placeholder = t("sys.ocrEmpty");
         }
       } catch (e: any) {
         console.error("OCR failed:", e);
-        textInput.placeholder = `OCR failed: ${e} — type manually`;
+        textInput.placeholder = t("sys.ocrFailed", { e: String(e) });
       } finally {
         textInput.disabled = false;
         textInput.focus();
@@ -51,12 +55,19 @@ window.addEventListener("DOMContentLoaded", async () => {
   cancelBtn.addEventListener("click", handleCancel);
 });
 
+/** Labels that depend on whether this is a calendar event or a reminder. */
+function applyTypeTexts() {
+  const reminder = configData?.item_type === "reminders";
+  titleEl.textContent = t(reminder ? "sys.newReminder" : "sys.newEvent");
+  document.querySelector('label[for="config-list"]')!.textContent = t(reminder ? "sys.list" : "sys.calendar");
+  document.querySelector('label[for="config-start"]')!.textContent = t(reminder ? "sys.due" : "sys.start");
+}
+
 function setupUI(data: SystemConfigData) {
   textInput.value = data.text;
+  applyTypeTexts();
 
   if (data.item_type === "calendar") {
-    titleEl.textContent = "New Calendar Event";
-    document.querySelector('label[for="config-list"]')!.textContent = "Calendar";
     startGroup.classList.remove("hidden");
     endGroup.classList.remove("hidden");
 
@@ -77,11 +88,7 @@ function setupUI(data: SystemConfigData) {
       }
     });
   } else {
-    // Reminders
-    titleEl.textContent = "New Reminder";
-    document.querySelector('label[for="config-list"]')!.textContent = "List";
-    // Show start as optional due date, hide end
-    document.querySelector('label[for="config-start"]')!.textContent = "Due Date (optional)";
+    // Reminders: start doubles as an optional due date; no end
     startInput.value = "";
     endGroup.classList.add("hidden");
   }
@@ -110,7 +117,7 @@ async function handleCreate() {
   }
 
   createBtn.disabled = true;
-  createBtn.textContent = "Creating...";
+  createBtn.textContent = t("sys.creating");
 
   try {
     await invoke("create_system_item", {
@@ -122,9 +129,9 @@ async function handleCreate() {
     });
   } catch (e) {
     console.error("create_system_item failed:", e);
-    alert("Failed: " + e);
+    alert(t("sys.failed") + e);
     createBtn.disabled = false;
-    createBtn.textContent = "Create";
+    createBtn.textContent = t("common.create");
     return;
   }
 

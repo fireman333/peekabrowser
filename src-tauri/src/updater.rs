@@ -9,6 +9,7 @@
 //! Uses the system `curl`, `shasum`, `hdiutil` and `ditto`; no extra crates.
 //! Checks are one-shot (at launch, then once a day) — no polling.
 
+use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -168,10 +169,18 @@ pub fn bundle_path_for(exe: &Path) -> Result<PathBuf, String> {
         .to_path_buf();
     let s = bundle.to_string_lossy();
     if s.contains("/AppTranslocation/") {
-        return Err("macOS is running the app from a temporary location. Move Peekabrowser to Applications (or run Install.command) first.".into());
+        return Err(tr(
+            "macOS 目前從暫存位置執行本程式。請先把 Peekabrowser 移到「應用程式」資料夾（或執行 Install.command）。",
+            "macOS is running the app from a temporary location. Move Peekabrowser to Applications (or run Install.command) first.",
+        )
+        .into());
     }
     if s.starts_with("/Volumes/") {
-        return Err("Peekabrowser is running from the disk image. Copy it to Applications first.".into());
+        return Err(tr(
+            "Peekabrowser 正從磁碟映像檔執行。請先把它拷貝到「應用程式」資料夾。",
+            "Peekabrowser is running from the disk image. Copy it to Applications first.",
+        )
+        .into());
     }
     Ok(bundle)
 }
@@ -185,7 +194,7 @@ fn curl(args: &[&str]) -> Result<Vec<u8>, String> {
         .output()
         .map_err(|e| format!("curl failed to start: {}", e))?;
     if !out.status.success() {
-        return Err(format!("Network error: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(trf("網路錯誤：{}", "Network error: {}", &[String::from_utf8_lossy(&out.stderr).trim()]));
     }
     Ok(out.stdout)
 }
@@ -199,14 +208,14 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
 }
 
 pub fn check(app: &AppHandle) -> Result<UpdateInfo, String> {
-    set_status(app, "checking", "Checking for updates…", None);
+    set_status(app, "checking", tr("正在檢查更新…", "Checking for updates…"), None);
     let url = format!("https://api.github.com/repos/{}/releases/latest", REPO);
     let body = curl(&["-H", "Accept: application/vnd.github+json", &url])?;
     let info = info_from_release_json(&String::from_utf8_lossy(&body), env!("CARGO_PKG_VERSION"), arch_suffix())?;
     if info.available {
-        set_status(app, "available", &format!("Version {} is available", info.latest), Some(info.clone()));
+        set_status(app, "available", &trf("有新版本 {}", "Version {} is available", &[&info.latest]), Some(info.clone()));
     } else {
-        set_status(app, "up_to_date", "Peekabrowser is up to date", Some(info.clone()));
+        set_status(app, "up_to_date", tr("Peekabrowser 已是最新版本", "Peekabrowser is up to date"), Some(info.clone()));
     }
     Ok(info)
 }
@@ -214,7 +223,7 @@ pub fn check(app: &AppHandle) -> Result<UpdateInfo, String> {
 /// Download, verify, stage, then quit and let the helper swap and relaunch.
 pub fn install(app: &AppHandle) -> Result<(), String> {
     if BUSY.swap(true, Ordering::SeqCst) {
-        return Err("An update is already in progress".into());
+        return Err(tr("已經有更新正在進行中", "An update is already in progress").into());
     }
     let res = install_inner(app);
     BUSY.store(false, Ordering::SeqCst);
@@ -230,7 +239,7 @@ fn install_inner(app: &AppHandle) -> Result<(), String> {
         None => check(app)?,
     };
     if !info.available {
-        return Err("Already up to date".into());
+        return Err(tr("已是最新版本", "Already up to date").into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let bundle = bundle_path_for(&exe)?;
@@ -258,7 +267,7 @@ fn install_inner(app: &AppHandle) -> Result<(), String> {
     let dmg = work.join(&name);
     let dmg_s = dmg.to_string_lossy().into_owned();
 
-    set_status(app, "downloading", &format!("Downloading {}…", info.latest), None);
+    set_status(app, "downloading", &trf("正在下載 {}…", "Downloading {}…", &[&info.latest]), None);
     curl(&["-o", &dmg_s, &url])?;
 
     let actual = run("/usr/bin/shasum", &["-a", "256", &dmg_s])?
@@ -268,10 +277,10 @@ fn install_inner(app: &AppHandle) -> Result<(), String> {
         .to_lowercase();
     if actual != expected {
         let _ = std::fs::remove_dir_all(&work);
-        return Err("Downloaded file failed checksum verification — update cancelled.".into());
+        return Err(tr("下載的檔案未通過校驗碼驗證 — 已取消更新。", "Downloaded file failed checksum verification — update cancelled.").into());
     }
 
-    set_status(app, "installing", "Preparing update…", None);
+    set_status(app, "installing", tr("正在準備更新…", "Preparing update…"), None);
     let mnt = work.join("mnt");
     let mnt_s = mnt.to_string_lossy().into_owned();
     run("/usr/bin/hdiutil", &["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", &mnt_s, &dmg_s])?;
@@ -295,7 +304,7 @@ fn install_inner(app: &AppHandle) -> Result<(), String> {
     let _ = run("/usr/bin/hdiutil", &["detach", "-quiet", &mnt_s]);
     copy?;
     let _ = run("/usr/bin/xattr", &["-cr", &staged_s]);
-    run("/usr/bin/codesign", &["--verify", "--deep", &staged_s]).map_err(|_| "Update failed its code-signature check".to_string())?;
+    run("/usr/bin/codesign", &["--verify", "--deep", &staged_s]).map_err(|_| tr("更新檔未通過程式碼簽章檢查", "Update failed its code-signature check").to_string())?;
 
     // Helper: wait for us to exit, swap bundles (keeping a backup until the
     // new one is in place), relaunch.
@@ -326,7 +335,7 @@ open "{bundle}"
         .spawn()
         .map_err(|e| format!("Couldn't start the installer: {}", e))?;
 
-    set_status(app, "installing", "Restarting into the new version…", None);
+    set_status(app, "installing", tr("正在重新啟動到新版本…", "Restarting into the new version…"), None);
     log::info!("updater: restarting into {}", info.latest);
     std::thread::sleep(Duration::from_millis(300));
     std::process::exit(0);
@@ -353,7 +362,11 @@ pub fn start_background_checks(app: AppHandle) {
                         } else {
                             crate::lifecycle::notify(
                                 &app,
-                                &format!("Peekabrowser {} is available — open Settings to update.", info.latest),
+                                &trf(
+                                    "Peekabrowser {} 已推出 — 請到設定中更新。",
+                                    "Peekabrowser {} is available — open Settings to update.",
+                                    &[&info.latest],
+                                ),
                             );
                         }
                     }

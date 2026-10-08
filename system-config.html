@@ -1,39 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant-TW">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quick Create</title>
+  <title>Peekabrowser</title>
   <link rel="stylesheet" href="/src/system-config.css" />
   <script type="module" src="/src/system-config.ts" defer></script>
 </head>
 <body>
   <div id="config-app">
-    <h1 id="config-title">New Event</h1>
+    <h1 id="config-title"></h1>
 
     <div class="form-group">
-      <label for="config-text">Title</label>
-      <input id="config-text" type="text" placeholder="Event title..." />
+      <label for="config-text" data-i18n="sys.title"></label>
+      <input id="config-text" type="text" data-i18n-placeholder="sys.titlePh" />
     </div>
 
     <div class="form-group">
-      <label for="config-list">Calendar</label>
+      <label for="config-list"></label>
       <select id="config-list"></select>
     </div>
 
     <div class="form-group" id="start-group">
-      <label for="config-start">Start</label>
+      <label for="config-start"></label>
       <input id="config-start" type="datetime-local" />
     </div>
 
     <div class="form-group" id="end-group">
-      <label for="config-end">End</label>
+      <label for="config-end" data-i18n="sys.end"></label>
       <input id="config-end" type="datetime-local" />
     </div>
 
     <div class="form-actions">
-      <button id="create-btn" class="btn-primary">Create</button>
-      <button id="cancel-btn" class="btn-secondary">Cancel</button>
+      <button id="create-btn" class="btn-primary" data-i18n="common.create"></button>
+      <button id="cancel-btn" class="btn-secondary" data-i18n="common.cancel"></button>
     </div>
   </div>
 </body>

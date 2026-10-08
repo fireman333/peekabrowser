@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::delivery::{Delivery, Payload, PickerState};
+use crate::i18n::tr;
 use crate::destinations::{Destination, DestinationManager};
 use crate::webviews::{PageInfo, WebViewTabManager};
 
@@ -192,7 +193,7 @@ pub fn new_tab_for_active(
         let mgr = tab_manager.lock().map_err(|_| "Lock failed")?;
         mgr.get_active_page()
             .map(|p| p.dest_id.clone())
-            .ok_or_else(|| "No active page".to_string())?
+            .ok_or_else(|| tr("沒有開啟中的頁面", "No active page").to_string())?
     };
     new_tab(app, dest_manager, dest_id)
 }
@@ -200,7 +201,7 @@ pub fn new_tab_for_active(
 /// Send text to the active page viewer
 #[tauri::command]
 pub fn send_to_active(app: AppHandle, text: String) -> Result<(), String> {
-    let target = crate::lifecycle::active_target(&app).ok_or("No active page")?;
+    let target = crate::lifecycle::active_target(&app).ok_or(tr("沒有開啟中的頁面", "No active page"))?;
     crate::delivery::spawn(
         app,
         Delivery { target, payload: Payload::Text { text }, prompt: String::new(), record_id: None },
@@ -312,7 +313,7 @@ fn open_system_config_window_inner(app: &AppHandle) {
         label,
         tauri::WebviewUrl::App("system-config.html".into()),
     )
-    .title("Quick Create")
+    .title(window_title("system-config").unwrap_or("Quick Create"))
     .inner_size(win_w, win_h)
     .position(x, y)
     .resizable(false)
@@ -672,7 +673,7 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
     let payload = match (pending.payload, text) {
         (Some(p), _) => p,
         (None, Some(t)) if !t.is_empty() => Payload::Text { text: t },
-        _ => return Err("Nothing to send".into()),
+        _ => return Err(tr("沒有可傳送的內容", "Nothing to send").into()),
     };
 
     // Handle system:// destinations (Calendar, Reminders) via AppleScript
@@ -778,8 +779,8 @@ pub fn open_settings_window(app: AppHandle) {
     }
 
     let (screen_w, screen_h) = crate::panel::get_primary_screen_size();
-    let win_w = 520.0_f64;
-    let win_h = 480.0_f64;
+    let win_w = 560.0_f64;
+    let win_h = 640.0_f64;
     let x = (screen_w - win_w) / 2.0;
     let y = (screen_h - win_h) / 2.0;
 
@@ -788,7 +789,7 @@ pub fn open_settings_window(app: AppHandle) {
         label,
         tauri::WebviewUrl::App("settings.html".into()),
     )
-    .title("Peekabrowser Settings")
+    .title(window_title("settings-window").unwrap_or("Peekabrowser Settings"))
     .inner_size(win_w, win_h)
     .position(x, y)
     .resizable(true)
@@ -850,7 +851,7 @@ pub fn go_forward(app: AppHandle) {
 #[tauri::command]
 pub fn open_active_in_browser(app: AppHandle) -> Result<(), String> {
     let label = crate::panel::get_active_page_label()
-        .ok_or("No active page")?;
+        .ok_or(tr("沒有開啟中的頁面", "No active page"))?;
     let viewer = app.get_webview_window(&label)
         .ok_or("Page viewer not found")?;
     let url = viewer.url().map_err(|e| e.to_string())?;
@@ -913,10 +914,10 @@ pub fn save_answer_blocking(app: &AppHandle) -> Result<SaveResult, String> {
     let (page_id, label, query_id, dest_id, dest_name) = {
         let mgr = app.state::<std::sync::Mutex<WebViewTabManager>>();
         let mgr = mgr.lock().map_err(|_| "lock")?;
-        let p = mgr.get_active_page().ok_or("No active page")?;
+        let p = mgr.get_active_page().ok_or(tr("沒有開啟中的頁面", "No active page"))?;
         (
             p.id.clone(),
-            p.label.clone().ok_or("Page is not loaded")?,
+            p.label.clone().ok_or(tr("頁面尚未載入", "Page is not loaded"))?,
             p.query_id.clone(),
             p.dest_id.clone(),
             p.dest_name.clone(),
@@ -925,9 +926,9 @@ pub fn save_answer_blocking(app: &AppHandle) -> Result<SaveResult, String> {
     let capture: crate::records::Capture = crate::delivery::call(app, &label, "extract", &[])
         .ok_or("Couldn't read this page")?;
     if capture.text.trim().is_empty() && capture.markdown.trim().is_empty() {
-        return Err("No answer found — select the text you want to save, then try again.".into());
+        return Err(tr("找不到回答 — 請先選取要儲存的文字再試一次。", "No answer found — select the text you want to save, then try again.").into());
     }
-    let store = app.try_state::<crate::records::RecordStore>().ok_or("Records unavailable")?;
+    let store = app.try_state::<crate::records::RecordStore>().ok_or(tr("無法使用紀錄功能", "Records unavailable"))?;
     let existing = query_id.filter(|id| store.get(id).ok().flatten().is_some());
     let record_id = match existing {
         Some(id) => id,
@@ -960,10 +961,10 @@ pub fn save_answer_and_notify(app: &AppHandle) {
     std::thread::spawn(move || {
         let msg = match save_answer_blocking(&app) {
             Ok(r) => match r.capture_status.as_str() {
-                "partial" => "Saved (still generating — save again when it finishes)".to_string(),
-                "manual_selection" => "Saved selection".to_string(),
-                "unknown" => "Saved (completeness unknown on this site)".to_string(),
-                _ => "Answer saved".to_string(),
+                "partial" => tr("已儲存（仍在生成中，完成後請再儲存一次）", "Saved (still generating — save again when it finishes)").to_string(),
+                "manual_selection" => tr("已儲存選取內容", "Saved selection").to_string(),
+                "unknown" => tr("已儲存（此網站無法判斷回答是否完整）", "Saved (completeness unknown on this site)").to_string(),
+                _ => tr("已儲存回答", "Answer saved").to_string(),
             },
             Err(e) => e,
         };
@@ -1012,7 +1013,7 @@ pub fn get_record_attachment(store: State<crate::records::RecordStore>, id: Stri
 
 #[tauri::command]
 pub fn copy_record_markdown(app: AppHandle, store: State<crate::records::RecordStore>, id: String) -> Result<(), String> {
-    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or("Record not found")?;
+    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or(tr("找不到這筆紀錄", "Record not found"))?;
     crate::delivery::copy_to_clipboard(&app, &crate::records::to_markdown(&r));
     Ok(())
 }
@@ -1020,7 +1021,7 @@ pub fn copy_record_markdown(app: AppHandle, store: State<crate::records::RecordS
 /// Write the record as Markdown into ~/Downloads and reveal it in Finder.
 #[tauri::command]
 pub fn export_record_markdown(store: State<crate::records::RecordStore>, id: String) -> Result<String, String> {
-    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or("Record not found")?;
+    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or(tr("找不到這筆紀錄", "Record not found"))?;
     let home = std::env::var_os("HOME").ok_or("No HOME")?;
     let dir = std::path::PathBuf::from(home).join("Downloads");
     let _ = std::fs::create_dir_all(&dir);
@@ -1049,8 +1050,8 @@ pub fn open_record(
     dest_manager: State<DestinationManager>,
     id: String,
 ) -> Result<(), String> {
-    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or("Record not found")?;
-    let mut dest = dest_manager.get_by_id(&r.destination_id).ok_or("Destination no longer exists")?;
+    let r = store.get(&id).map_err(|e| e.to_string())?.ok_or(tr("找不到這筆紀錄", "Record not found"))?;
+    let mut dest = dest_manager.get_by_id(&r.destination_id).ok_or(tr("這個目的地已不存在", "Destination no longer exists"))?;
     if let Some(u) = r.conversation_url.filter(|u| u.starts_with("http")) {
         dest.url = u;
     }
@@ -1062,7 +1063,7 @@ pub fn open_record(
 
 #[tauri::command]
 pub fn open_records_window(app: AppHandle) {
-    open_aux_window(&app, "records-window", "records.html", "Peekabrowser Records", 720.0, 560.0);
+    open_aux_window(&app, "records-window", "records.html", window_title("records-window").unwrap_or("Peekabrowser Records"), 720.0, 560.0);
 }
 
 fn open_aux_window(app: &AppHandle, label: &str, page: &str, title: &str, w: f64, h: f64) {
@@ -1097,9 +1098,57 @@ pub fn save_app_settings(
     store: State<crate::app_settings::AppSettingsStore>,
     settings: crate::app_settings::AppSettings,
 ) {
+    let old_language = store.get().language;
     store.update(settings);
     crate::panel::hover_detector::sync_monitors(&app);
     crate::lifecycle::ensure_maintenance(&app);
+    let language = store.get().language;
+    if language != old_language {
+        apply_language(&app, &language);
+    }
+}
+
+/// Switch the interface language everywhere: Rust strings, menu bar, open windows.
+fn apply_language(app: &AppHandle, language: &str) {
+    crate::i18n::set_language(language);
+    crate::tray::refresh_menu(app);
+    for (label, window) in app.webview_windows() {
+        if let Some(title) = window_title(&label) {
+            let _ = window.set_title(title);
+        }
+    }
+    let _ = app.emit("language-changed", language.to_string());
+}
+
+/// Localized native title for the app's own windows (None = leave as is).
+pub fn window_title(label: &str) -> Option<&'static str> {
+    use crate::i18n::tr;
+    match label {
+        "settings-window" => Some(tr("Peekabrowser 設定", "Peekabrowser Settings")),
+        "records-window" => Some(tr("Peekabrowser 紀錄", "Peekabrowser Records")),
+        "system-config" => Some(tr("快速建立", "Quick Create")),
+        _ => None,
+    }
+}
+
+/// Actual "Launch at login" state, read from the system (the LaunchAgent), not a stored flag.
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Enable/disable launch at login; returns the state read back from the system.
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    if enabled {
+        launcher.enable().map_err(|e| e.to_string())?;
+    } else {
+        launcher.disable().map_err(|e| e.to_string())?;
+    }
+    launcher.is_enabled().map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
