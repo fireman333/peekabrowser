@@ -1,15 +1,22 @@
 #!/bin/bash
 # Package Peekabrowser.app + Install.command into a custom DMG
-# Usage: ./scripts/package-dmg.sh [version]
-# Example: ./scripts/package-dmg.sh 1.4.0
+# Usage: ./scripts/package-dmg.sh [version] [arch] [target-triple]
+# Example: ./scripts/package-dmg.sh 1.8.0 aarch64 aarch64-apple-darwin
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 VERSION="${1:-$(grep '"version"' "$PROJECT_DIR/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')}"
-APP_PATH="$PROJECT_DIR/src-tauri/target/release/bundle/macos/Peekabrowser.app"
-DMG_OUTPUT="$PROJECT_DIR/src-tauri/target/release/bundle/dmg/Peekabrowser_${VERSION}_aarch64.dmg"
+ARCH="${2:-aarch64}"
+TRIPLE="${3:-}"
+if [ -n "$TRIPLE" ]; then
+    BUNDLE_DIR="$PROJECT_DIR/src-tauri/target/$TRIPLE/release/bundle"
+else
+    BUNDLE_DIR="$PROJECT_DIR/src-tauri/target/release/bundle"
+fi
+APP_PATH="$BUNDLE_DIR/macos/Peekabrowser.app"
+DMG_OUTPUT="$BUNDLE_DIR/dmg/Peekabrowser_${VERSION}_${ARCH}.dmg"
 INSTALL_SCRIPT="$SCRIPT_DIR/Install.command"
 TEMP_DIR=$(mktemp -d)
 DMG_STAGE="$TEMP_DIR/dmg-stage"

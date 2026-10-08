@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_1.7.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_1.7.0_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_1.8.0_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_1.8.0_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
    ```bash
@@ -86,6 +86,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 | `⌘⇧A` | 顯示/隱藏側邊欄 |
 | `⌘⇧S` | 螢幕截圖並傳送給 AI |
 | `⌘C` `⌘C` | 快速複製兩次，選擇要傳送到哪個 Destination |
+| `⌘⇧E` | 保存目前頁面的 AI 回答到「紀錄」（有選取文字時只保存選取內容） |
 
 **側邊欄內快捷鍵**
 
@@ -184,12 +185,21 @@ Peekabrowser 支援多螢幕環境。側邊欄會出現在滑鼠所在的螢幕�
 ```
 ~/Library/Application Support/com.peekabrowser.app/
 ├── destinations.json    # Destination 列表
-└── shortcuts.json       # 快捷鍵設定
+├── shortcuts.json       # 快捷鍵設定
+├── settings.json        # 省電／外觀設定
+├── records.sqlite       # 查詢與保存的回答
+└── attachments/         # 查詢用的截圖
 ```
 
 - 網站的登入狀態和 Cookie 會保留在 WebView 中
 - 切換分頁不會遺失登入狀態
 - 解除安裝 Peekabrowser 後，可手動刪除上述資料夾清除所有資料
+
+### 查詢紀錄與省電
+
+- **紀錄：** 每次傳送都會記下原文（或截圖）、prompt、目的地與來源 App。按側邊欄的保存按鈕或 `⌘⇧E` 保存回答；在「紀錄」視窗可搜尋、收藏、加標籤／筆記、重新開啟對話、匯出 Markdown 或刪除。
+- **省電：** 隱藏時不輪詢滑鼠與剪貼簿；只有正在生成的回答會讓 App 保持活躍。背景頁面閒置一段時間（預設 5 分鐘）會卸載但保留在列表中，點一下即可恢復。設定中可關閉「左緣顯示」與原生材質。
+- **輔助使用（選用）：** 在「系統設定 → 隱私與安全性 → 輔助使用」允許 Peekabrowser 後，`⌘C⌘C` 改由按鍵事件觸發，待機更省電。
 
 ### 退出
 
@@ -217,7 +227,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_1.7.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_1.7.0_x64.dmg` (Intel)
+1. Open `Peekabrowser_1.8.0_aarch64.dmg` (Apple Silicon) or `Peekabrowser_1.8.0_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
    ```bash
@@ -292,6 +302,7 @@ Three buttons at the bottom of the sidebar (S / M / L):
 | `⌘⇧A` | Show/hide sidebar |
 | `⌘⇧S` | Screenshot and send to AI |
 | `⌘C` `⌘C` | Quick-send clipboard to a Destination |
+| `⌘⇧E` | Save the current page's AI answer to Records (or just the selection, if any) |
 
 **In-sidebar Shortcuts**
 
@@ -390,12 +401,21 @@ All settings are stored locally on your machine:
 ```
 ~/Library/Application Support/com.peekabrowser.app/
 ├── destinations.json    # Destination list
-└── shortcuts.json       # Keyboard shortcut config
+├── shortcuts.json       # Keyboard shortcut config
+├── settings.json        # Power / appearance settings
+├── records.sqlite       # Queries and saved answers
+└── attachments/         # Screenshots used in queries
 ```
 
 - Login state and cookies are preserved in the WebView
 - Switching tabs does not log you out
 - To fully uninstall, delete the folder above after removing the app
+
+### Records & power
+
+- **Records:** each query stores the original text (or screenshot), prompt, destination and source app. Save the answer with the sidebar save button or `⌘⇧E`; the Records window offers search, favorites, tags/notes, reopen, Markdown export and delete.
+- **Power:** no mouse or clipboard polling while hidden; only a generating answer keeps the app awake. Background pages unload after an idle period (default 5 min) but stay listed and restore on click. Edge reveal and native material can be turned off in Settings.
+- **Accessibility (optional):** allow Peekabrowser under System Settings → Privacy & Security → Accessibility to make `⌘C⌘C` key-triggered (lower idle cost).
 
 ### Quitting
 
@@ -418,6 +438,15 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 ---
 
 ### 版本紀錄
+
+**v1.8.0 — 低耗能、可靠傳送、回答紀錄**
+
+- 🔋 不再整個生命週期停用 App Nap，只在生成回答時持有活動 token；移除 16 ms 滑鼠與 30 ms 剪貼簿輪詢
+- 🗂 統一分頁生命週期、限制已載入頁面數，背景頁面可恢復卸載
+- 📨 文字／截圖型別化傳送，截圖可搭配 prompt 前綴；就緒即注入、成功即停止
+- 📝 新增查詢紀錄、`⌘⇧E` 保存回答（Markdown）、紀錄視窗搜尋與匯出
+- 🎨 明暗模式、一致圖示、Liquid Glass／vibrancy 原生材質
+
 
 **v1.7.0 — Gemini 穩定性大幅改善**
 
@@ -458,6 +487,15 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v1.8.0 — Low power, reliable delivery, saved answers**
+
+- 🔋 No app-lifetime App Nap opt-out; activity token only while generating; 16 ms mouse and 30 ms clipboard polling removed
+- 🗂 Unified page lifecycle, bounded loaded pages, restorable unloading
+- 📨 Typed text/screenshot delivery (screenshots work with prompt prefixes); inject on ready, stop on success
+- 📝 Query records, `⌘⇧E` save answer as Markdown, Records window with search and export
+- 🎨 Light/dark mode, consistent icons, Liquid Glass / vibrancy material
+
+
 **v1.7.0 — Gemini Stability Improvements**
 
 - 🔋 **Disable App Nap**: Prevents macOS from throttling WKWebView network processes, reducing SSE streaming disconnections for Gemini and other AI services
@@ -495,4 +533,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v1.7.0 | Built with [Tauri](https://tauri.app)
+Peekabrowser v1.8.0 | Built with [Tauri](https://tauri.app)

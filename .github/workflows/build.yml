@@ -1,0 +1,128 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a GitHub release with this tag (e.g. v1.8.0). Leave empty to only build."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            target: aarch64-apple-darwin
+            swift_target: arm64-apple-macos13.0
+          - arch: x64
+            target: x86_64-apple-darwin
+            swift_target: x86_64-apple-macos13.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Link against the system SQLite (never Homebrew's)
+        run: echo "SQLITE3_LIB_DIR=$(xcrun --show-sdk-path)/usr/lib" >> "$GITHUB_ENV"
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Frontend build (tsc + vite)
+        run: npm run build
+
+      - name: Rust unit tests
+        if: matrix.arch == 'aarch64'
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      - name: Build OCR helper for ${{ matrix.arch }}
+        run: |
+          swiftc -O -target ${{ matrix.swift_target }} src-tauri/ocr-helper/main.swift -o src-tauri/assets/ocr-helper
+          file src-tauri/assets/ocr-helper
+
+      - name: Build app bundle
+        run: npx tauri build --target ${{ matrix.target }} --bundles app
+
+      - name: Ad-hoc sign and package DMG
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Peekabrowser.app"
+          for BIN in "$APP"/Contents/MacOS/*; do
+            otool -L "$BIN"
+            if otool -L "$BIN" | grep -E "/opt/homebrew|/usr/local"; then
+              echo "$BIN links a non-system library" >&2; exit 1
+            fi
+          done
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          ./scripts/package-dmg.sh "$VERSION" "${{ matrix.arch }}" "${{ matrix.target }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Peekabrowser-${{ matrix.arch }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+
+      - name: Resolve tag and notes
+        id: meta
+        run: |
+          TAG="${{ github.event.inputs.release_tag }}"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_REF#refs/tags/}"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          NOTES="docs/releases/$TAG.md"
+          if [ ! -f "$NOTES" ]; then echo "Release notes $NOTES missing" >&2; exit 1; fi
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
+          (cd dist-release && shasum -a 256 *.dmg) > dist-release/SHA256SUMS.txt
+          cat dist-release/SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Peekabrowser ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.meta.outputs.notes }}
+          files: |
+            dist-release/*.dmg
+            dist-release/SHA256SUMS.txt
