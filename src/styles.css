@@ -21,7 +21,7 @@
   --danger: #d70015;
   --border: rgba(0, 0, 0, 0.1);
   --focus: rgba(10, 132, 255, 0.55);
-  --radius: 8px;
+  --radius: 10px;
 }
 
 @media (prefers-color-scheme: dark) {

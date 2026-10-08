@@ -639,13 +639,28 @@ pub fn ocr_image(path: &std::path::Path) -> Result<String, String> {
 /// The payload comes from the pending query captured at trigger time; `text`
 /// is accepted for compatibility but a typed payload is preferred.
 #[tauri::command]
-pub fn pick_destination(
-    app: AppHandle,
-    dest_manager: State<DestinationManager>,
-    picker_state: State<PickerState>,
-    id: String,
-    text: Option<String>,
-) -> Result<(), String> {
+pub fn pick_destination(app: AppHandle, id: String, text: Option<String>) -> Result<(), String> {
+    pick_destination_impl(&app, &id, text)
+}
+
+/// Pick the n-th destination in picker order (keyboard shortcut / auto-send).
+pub fn pick_destination_by_index(app: &AppHandle, index: usize) -> Result<(), String> {
+    let id = app
+        .state::<DestinationManager>()
+        .get_all()
+        .get(index)
+        .map(|d| d.id.clone())
+        .ok_or("No destination at that position")?;
+    pick_destination_impl(app, &id, None)
+}
+
+/// Shared by the picker click, its keyboard shortcuts and auto-send.
+/// Must run on the main thread (creates/positions windows).
+pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) -> Result<(), String> {
+    let app = app.clone();
+    let id = id.to_string();
+    let dest_manager = app.state::<DestinationManager>();
+    let picker_state = app.state::<PickerState>();
     crate::panel::hide_picker(&app);
 
     let dest = dest_manager

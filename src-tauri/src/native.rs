@@ -206,3 +206,60 @@ pub fn install_system_glass(window: &WebviewWindow, corner_radius: f64) -> bool 
         false
     }
 }
+
+/// Which corners of a window to round (combined as a bit set).
+pub mod corners {
+    // CACornerMask in AppKit's unflipped layer coordinates (MinY = bottom).
+    pub const BOTTOM_LEFT: usize = 1;
+    pub const BOTTOM_RIGHT: usize = 2;
+    pub const TOP_LEFT: usize = 4;
+    pub const TOP_RIGHT: usize = 8;
+    pub const LEFT: usize = TOP_LEFT | BOTTOM_LEFT;
+    pub const RIGHT: usize = TOP_RIGHT | BOTTOM_RIGHT;
+    pub const ALL: usize = LEFT | RIGHT;
+}
+
+/// Continuous-curve rounded corners for a borderless window: the content view's
+/// layer clips everything inside (web view and any material view), and the
+/// window becomes non-opaque so the shadow follows the rounded shape.
+pub fn set_rounded_corners(window: &WebviewWindow, radius: f64, mask: usize) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
+        use objc2_foundation::NSString;
+
+        let Ok(ns_window) = window.ns_window() else { return };
+        let ns_window = ns_window as *mut AnyObject;
+        let content: *mut AnyObject = msg_send![ns_window, contentView];
+        if content.is_null() {
+            return;
+        }
+        if let Some(color_cls) = AnyClass::get(c"NSColor") {
+            let clear: *mut AnyObject = msg_send![color_cls, clearColor];
+            let _: () = msg_send![ns_window, setOpaque: Bool::NO];
+            let _: () = msg_send![ns_window, setBackgroundColor: clear];
+        }
+        let _: () = msg_send![content, setWantsLayer: Bool::YES];
+        let layer: *mut AnyObject = msg_send![content, layer];
+        if layer.is_null() {
+            return;
+        }
+        let _: () = msg_send![layer, setCornerRadius: radius];
+        let _: () = msg_send![layer, setMasksToBounds: Bool::YES];
+        let _: () = msg_send![layer, setMaskedCorners: mask];
+        // Continuous ("squircle") curve like system windows (macOS 10.15+ API).
+        let curve_sel = Sel::register(c"setCornerCurve:");
+        let has_curve: bool = msg_send![layer, respondsToSelector: curve_sel];
+        if has_curve {
+            let continuous = NSString::from_str("continuous");
+            let _: () = msg_send![layer, setCornerCurve: &*continuous];
+        }
+        let _: () = msg_send![ns_window, setHasShadow: Bool::YES];
+        let _: () = msg_send![ns_window, invalidateShadow];
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, radius, mask);
+    }
+}

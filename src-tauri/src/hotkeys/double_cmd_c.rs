@@ -108,9 +108,21 @@ fn monitor_pasteboard(app: AppHandle, keys: bool) {
                         s.source_app = source_app;
                     }
                 }
-                let (cx, cy) = crate::panel::get_cursor_topleft_pos();
+                let auto_first = app
+                    .try_state::<crate::app_settings::AppSettingsStore>()
+                    .map(|s| s.get().auto_send_first)
+                    .unwrap_or(false);
                 let app2 = app.clone();
-                let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
+                if auto_first {
+                    let _ = app.run_on_main_thread(move || {
+                        if let Err(e) = crate::commands::pick_destination_by_index(&app2, 0) {
+                            log::warn!("auto-send to first destination failed: {}", e);
+                        }
+                    });
+                } else {
+                    let (cx, cy) = crate::panel::get_cursor_topleft_pos();
+                    let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
+                }
                 // Start a fresh chain so a third copy doesn't re-trigger.
                 last_change_time = 0;
                 last_had_text = has_text;

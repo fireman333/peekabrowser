@@ -49,6 +49,7 @@ interface AppSettings {
   edge_hover_enabled: boolean;
   native_material: boolean;
   background_unload_secs: number;
+  auto_send_first: boolean;
 }
 
 interface Diagnostics {
@@ -63,6 +64,7 @@ async function setupPowerSettings() {
   const edge = document.getElementById("opt-edge-hover") as HTMLInputElement;
   const material = document.getElementById("opt-material") as HTMLInputElement;
   const unload = document.getElementById("opt-unload") as HTMLSelectElement;
+  const autoFirst = document.getElementById("opt-auto-first") as HTMLInputElement;
   let current: AppSettings;
   try {
     current = await invoke<AppSettings>("get_app_settings");
@@ -71,6 +73,7 @@ async function setupPowerSettings() {
   }
   edge.checked = current.edge_hover_enabled;
   material.checked = current.native_material;
+  autoFirst.checked = current.auto_send_first;
   unload.value = String(current.background_unload_secs);
   if (!unload.value) unload.value = "300";
   const save = async () => {
@@ -78,12 +81,14 @@ async function setupPowerSettings() {
       edge_hover_enabled: edge.checked,
       native_material: material.checked,
       background_unload_secs: Number(unload.value) || 300,
+      auto_send_first: autoFirst.checked,
     };
     try { await invoke("save_app_settings", { settings: current }); } catch (_e) {}
   };
   edge.addEventListener("change", save);
   material.addEventListener("change", save);
   unload.addEventListener("change", save);
+  autoFirst.addEventListener("change", save);
 
   const diag = document.getElementById("diagnostics")!;
   const refresh = async () => {

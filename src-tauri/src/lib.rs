@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod native;
 pub mod panel;
 pub mod permissions;
+pub mod picker_keys;
 pub mod records;
 pub mod screenshot;
 pub mod tray;
@@ -75,6 +76,7 @@ pub fn run() {
 
             // Create the floating destination picker popup
             panel::create_picker_panel(&handle)?;
+            picker_keys::install(&handle);
 
             // Setup system tray
             tray::setup_tray(&handle)?;

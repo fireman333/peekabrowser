@@ -17,6 +17,8 @@ pub struct AppSettings {
     /// Seconds a background page may stay loaded before it is unloaded
     /// (metadata is kept so it can be restored with one click).
     pub background_unload_secs: u64,
+    /// ⌘C ⌘C sends straight to the first destination instead of showing the picker.
+    pub auto_send_first: bool,
 }
 
 impl Default for AppSettings {
@@ -25,6 +27,7 @@ impl Default for AppSettings {
             edge_hover_enabled: true,
             native_material: true,
             background_unload_secs: 300,
+            auto_send_first: false,
         }
     }
 }
