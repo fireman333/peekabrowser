@@ -12,6 +12,12 @@
 //!   precisely).
 //!
 //! Only text changes count; file/image copies reset the chain.
+//!
+//! With Accessibility, two clipboard changes alone are not enough: there must
+//! also have been two real ⌘C key presses (no other modifiers, no key repeat)
+//! within the window. Otherwise copy buttons, menu/right-click copies, apps
+//! that write the pasteboard twice per copy, or a copy observed late by the
+//! idle sampler followed by one ⌘C would all look like a double copy.
 
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -27,6 +33,31 @@ const IDLE_SAMPLING: Duration = Duration::from_millis(200);
 
 /// Set by the key monitor; wakes the sampler into a fast window.
 static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+
+/// Timestamps (ms) of the last two ⌘C key presses: (previous, latest).
+static TAPS: Mutex<(u64, u64)> = Mutex::new((0, 0));
+
+fn record_tap() {
+    if let Ok(mut t) = TAPS.lock() {
+        *t = (t.1, current_timestamp_ms());
+    }
+}
+
+/// True if two ⌘C presses landed within the window and the latest one is
+/// recent enough to have caused the clipboard change seen at `now`.
+fn recent_double_tap(now: u64) -> bool {
+    let Ok(t) = TAPS.lock() else { return false };
+    let (prev, last) = *t;
+    prev > 0
+        && last.saturating_sub(prev) < DOUBLE_TAP_WINDOW_MS
+        && now.saturating_sub(last) < BURST.as_millis() as u64
+}
+
+fn clear_taps() {
+    if let Ok(mut t) = TAPS.lock() {
+        *t = (0, 0);
+    }
+}
 
 pub fn start_double_cmd_c_detector(app: AppHandle) {
     let keys = install_key_monitor(&app);
@@ -95,7 +126,8 @@ fn monitor_pasteboard(app: AppHandle, keys: bool) {
         let short_interval = sampled_fast || !keys;
         let is_double = has_text
             && ((jump == 1 && time_diff < DOUBLE_TAP_WINDOW_MS && last_change_time > 0 && last_had_text)
-                || (jump >= 2 && short_interval));
+                || (jump >= 2 && short_interval))
+            && (!keys || recent_double_tap(now));
 
         if is_double {
             let text = get_clipboard_text();
@@ -124,6 +156,7 @@ fn monitor_pasteboard(app: AppHandle, keys: bool) {
                     let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
                 }
                 // Start a fresh chain so a third copy doesn't re-trigger.
+                clear_taps();
                 last_change_time = 0;
                 last_had_text = has_text;
                 last_count = current_count;
@@ -147,7 +180,11 @@ fn install_key_monitor(_app: &AppHandle) -> bool {
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject};
     const KEY_DOWN_MASK: u64 = 1 << 10;
+    const SHIFT_FLAG: usize = 1 << 17;
+    const CONTROL_FLAG: usize = 1 << 18;
+    const OPTION_FLAG: usize = 1 << 19;
     const COMMAND_FLAG: usize = 1 << 20;
+    const MODIFIERS: usize = SHIFT_FLAG | CONTROL_FLAG | OPTION_FLAG | COMMAND_FLAG;
     const KEYCODE_C: u16 = 8;
     unsafe {
         let Some(cls) = AnyClass::get(c"NSEvent") else { return false };
@@ -157,9 +194,15 @@ fn install_key_monitor(_app: &AppHandle) -> bool {
             }
             let flags: usize = msg_send![ev, modifierFlags];
             let code: u16 = msg_send![ev, keyCode];
-            if code == KEYCODE_C && flags & COMMAND_FLAG != 0 {
-                wake();
+            if code != KEYCODE_C || flags & MODIFIERS != COMMAND_FLAG {
+                return; // not plain ⌘C (⌘⇧C, ⌘⌥C … are other shortcuts)
             }
+            let repeat: bool = msg_send![ev, isARepeat];
+            if repeat {
+                return; // holding ⌘C must not count as a double tap
+            }
+            record_tap();
+            wake();
         });
         let m: *mut AnyObject = msg_send![cls, addGlobalMonitorForEventsMatchingMask: KEY_DOWN_MASK, handler: &*block];
         if m.is_null() {

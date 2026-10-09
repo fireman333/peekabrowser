@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_2.0.2_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.2_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_2.0.3_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.3_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
    ```bash
@@ -237,7 +237,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_2.0.2_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.2_x64.dmg` (Intel)
+1. Open `Peekabrowser_2.0.3_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.3_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
    ```bash
@@ -459,6 +459,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### 版本紀錄
 
+**v2.0.3** — 修正 `⌘C ⌘C` 快速傳送容易誤觸：開啟「輔助使用」權限時，需真的連按兩次 `⌘C` 才會觸發
+
 **v2.0.1** — 修正啟用「預設用第一個 Destination 開啟」時，游標在螢幕右側按 `⌘C ⌘C` 側邊欄會立刻收起的問題
 
 **v2.0.0 — 自動更新、選單快捷鍵、一鍵傳送、圓角外觀**
@@ -517,6 +519,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v2.0.3** — Fixed `⌘C ⌘C` quick send triggering by accident: with Accessibility granted, it now requires two real `⌘C` presses
+
 **v2.0.1** — Fixed the sidebar closing right after `⌘C ⌘C` auto-send when the cursor was on the right side of the screen
 
 **v2.0.0 — Auto-update, picker shortcuts, one-step send, rounded corners**
@@ -573,4 +577,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v2.0.1 | Built with [Tauri](https://tauri.app)
+Peekabrowser v2.0.3 | Built with [Tauri](https://tauri.app)
