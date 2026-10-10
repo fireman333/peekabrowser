@@ -1159,6 +1159,8 @@ pub struct Diagnostics {
     total_pages: usize,
     system_glass: bool,
     accessibility_trusted: bool,
+    /// The ⌘C key monitor is installed, so ⌘C ⌘C can fire.
+    double_copy_active: bool,
 }
 
 #[tauri::command]
@@ -1173,7 +1175,13 @@ pub fn get_diagnostics(tab_manager: State<std::sync::Mutex<WebViewTabManager>>) 
         total_pages: total,
         system_glass: crate::native::has_system_glass(),
         accessibility_trusted: crate::native::accessibility_trusted(),
+        double_copy_active: crate::hotkeys::double_cmd_c::is_active(),
     }
+}
+
+#[tauri::command]
+pub fn open_accessibility_settings() {
+    crate::permissions::open_accessibility_settings();
 }
 
 #[tauri::command]

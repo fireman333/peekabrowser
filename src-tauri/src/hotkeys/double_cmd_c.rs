@@ -1,24 +1,22 @@
-//! ⌘C ⌘C detection without a 30 ms forever-poll.
+//! ⌘C ⌘C detection.
+//!
+//! A double copy fires only when both of these hold:
+//! - two real ⌘C key presses (no other modifiers, no key repeat) within
+//!   `DOUBLE_TAP_WINDOW_MS`, seen by a global key monitor, and
+//! - two text clipboard changes in the same window.
+//!
+//! The key monitor needs Accessibility. Without it the feature stays off:
+//! clipboard timing alone also matches copy buttons, menu copies, apps that
+//! write the pasteboard twice per copy, and Universal Clipboard items arriving
+//! from another Mac. Accessibility is re-checked while missing, so granting it
+//! (or re-granting it after an update invalidated the old grant) takes effect
+//! without a relaunch.
 //!
 //! macOS has no public cross-app pasteboard-change notification, so the
-//! pasteboard `changeCount` still has to be sampled — but only as much as needed:
-//!
-//! - If Peekabrowser is trusted for Accessibility, a global key monitor sees
-//!   ⌘C (it observes only; the source app still receives the keystroke) and
-//!   opens a short fast-sampling window. Between copies the sampler sleeps
-//!   in a slow idle interval just to keep its baseline current.
-//! - Without Accessibility, sampling is adaptive: slow while idle, fast for a
-//!   short window after any clipboard change (so the second copy is timed
-//!   precisely).
-//!
-//! Only text changes count; file/image copies reset the chain.
-//!
-//! With Accessibility, two clipboard changes alone are not enough: there must
-//! also have been two real ⌘C key presses (no other modifiers, no key repeat)
-//! within the window. Otherwise copy buttons, menu/right-click copies, apps
-//! that write the pasteboard twice per copy, or a copy observed late by the
-//! idle sampler followed by one ⌘C would all look like a double copy.
+//! pasteboard `changeCount` is still sampled: slowly while idle (baseline
+//! refresh), fast for a short window after each ⌘C key press.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -26,16 +24,48 @@ use tauri::{AppHandle, Manager};
 const DOUBLE_TAP_WINDOW_MS: u64 = 500;
 const FAST: Duration = Duration::from_millis(30);
 const BURST: Duration = Duration::from_millis(1200);
-/// Idle interval when ⌘C key events wake us up (baseline refresh only).
-const IDLE_WITH_KEYS: Duration = Duration::from_millis(2000);
-/// Idle interval when we must notice the first copy by sampling.
-const IDLE_SAMPLING: Duration = Duration::from_millis(200);
+/// Idle interval between ⌘C presses (baseline refresh and Accessibility re-check).
+const IDLE: Duration = Duration::from_millis(2000);
 
 /// Set by the key monitor; wakes the sampler into a fast window.
 static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
+/// Whether the global ⌘C key monitor is installed (⌘C ⌘C is live).
+static KEYS_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// An install is queued on the main thread.
+static INSTALLING: AtomicBool = AtomicBool::new(false);
+
 /// Timestamps (ms) of the last two ⌘C key presses: (previous, latest).
 static TAPS: Mutex<(u64, u64)> = Mutex::new((0, 0));
+
+/// Whether ⌘C ⌘C is currently able to fire (key monitor installed).
+pub fn is_active() -> bool {
+    KEYS_ACTIVE.load(Ordering::Relaxed)
+}
+
+pub fn start_double_cmd_c_detector(app: AppHandle) {
+    ensure_key_monitor(&app);
+    std::thread::spawn(move || monitor_pasteboard(app));
+}
+
+/// Install the key monitor on the main thread once Accessibility is granted.
+fn ensure_key_monitor(app: &AppHandle) {
+    if is_active() || !crate::native::accessibility_trusted() {
+        return;
+    }
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let queued = app.run_on_main_thread(|| {
+        let ok = install_key_monitor();
+        KEYS_ACTIVE.store(ok, Ordering::SeqCst);
+        INSTALLING.store(false, Ordering::SeqCst);
+        log::info!("double-copy: key monitor {}", if ok { "installed" } else { "failed" });
+    });
+    if queued.is_err() {
+        INSTALLING.store(false, Ordering::SeqCst);
+    }
+}
 
 fn record_tap() {
     if let Ok(mut t) = TAPS.lock() {
@@ -59,15 +89,6 @@ fn clear_taps() {
     }
 }
 
-pub fn start_double_cmd_c_detector(app: AppHandle) {
-    let keys = install_key_monitor(&app);
-    log::info!(
-        "double-copy: {}",
-        if keys { "key-event triggered sampling" } else { "adaptive sampling (no Accessibility)" }
-    );
-    std::thread::spawn(move || monitor_pasteboard(app, keys));
-}
-
 fn wake() {
     let (lock, cv) = &WAKE;
     if let Ok(mut w) = lock.lock() {
@@ -89,93 +110,107 @@ fn sleep_or_wake(d: Duration) -> bool {
     woke
 }
 
-fn monitor_pasteboard(app: AppHandle, keys: bool) {
+/// How long a double-copy-shaped clipboard change may wait for its second ⌘C
+/// key event (the key monitor can be delivered after the pasteboard write).
+const PENDING_MS: u64 = 300;
+
+fn monitor_pasteboard(app: AppHandle) {
     let mut last_count: i64 = get_pasteboard_change_count();
     let mut last_change_time: u64 = 0;
     let mut last_had_text = true;
     let mut fast_until = Instant::now();
+    // Time a double-copy-shaped change was seen before its second key press.
+    let mut pending: Option<u64> = None;
 
     loop {
-        let interval = if Instant::now() < fast_until {
-            FAST
-        } else if keys {
-            IDLE_WITH_KEYS
-        } else {
-            IDLE_SAMPLING
-        };
-        let mut sampled_fast = interval == FAST;
+        let interval = if Instant::now() < fast_until { FAST } else { IDLE };
         if sleep_or_wake(interval) {
             fast_until = Instant::now() + BURST;
-            sampled_fast = true;
+        }
+        if interval == IDLE {
+            ensure_key_monitor(&app);
         }
 
         let current_count = get_pasteboard_change_count();
-        if current_count == last_count {
-            continue;
-        }
-        fast_until = Instant::now() + BURST;
-
         let now = current_timestamp_ms();
-        let time_diff = now.saturating_sub(last_change_time);
-        let jump = (current_count - last_count).unsigned_abs();
-        let has_text = pasteboard_has_text();
-
-        // Double copy: two text changes within the window, or both landed in
-        // one short sampling interval (changeCount jumped by ≥ 2). A jump seen
-        // after a long idle sleep could be any two writes, so it doesn't count.
-        let short_interval = sampled_fast || !keys;
-        let is_double = has_text
-            && ((jump == 1 && time_diff < DOUBLE_TAP_WINDOW_MS && last_change_time > 0 && last_had_text)
-                || (jump >= 2 && short_interval))
-            && (!keys || recent_double_tap(now));
-
-        if is_double {
-            let text = get_clipboard_text();
-            if !text.is_empty() {
-                log::info!("double-copy detected ({} chars)", text.chars().count());
-                let source_app = crate::native::frontmost_app_name();
-                if let Some(state) = app.try_state::<crate::delivery::PickerState>() {
-                    if let Ok(mut s) = state.0.lock() {
-                        s.payload = Some(crate::delivery::Payload::Text { text });
-                        s.source_app = source_app;
+        if current_count == last_count {
+            if let Some(seen) = pending {
+                if now.saturating_sub(seen) > PENDING_MS {
+                    pending = None;
+                } else if recent_double_tap(now) {
+                    pending = None;
+                    if fire(&app) {
+                        last_change_time = 0;
                     }
                 }
-                let auto_first = app
-                    .try_state::<crate::app_settings::AppSettingsStore>()
-                    .map(|s| s.get().auto_send_first)
-                    .unwrap_or(false);
-                let app2 = app.clone();
-                if auto_first {
-                    let _ = app.run_on_main_thread(move || {
-                        if let Err(e) = crate::commands::pick_destination_by_index(&app2, 0) {
-                            log::warn!("auto-send to first destination failed: {}", e);
-                        }
-                    });
-                } else {
-                    let (cx, cy) = crate::panel::get_cursor_topleft_pos();
-                    let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
-                }
-                // Start a fresh chain so a third copy doesn't re-trigger.
-                clear_taps();
-                last_change_time = 0;
-                last_had_text = has_text;
-                last_count = current_count;
-                continue;
             }
+            continue;
         }
 
-        last_change_time = if has_text { now } else { 0 };
-        last_had_text = has_text;
+        let time_diff = now.saturating_sub(last_change_time);
+        let jump = (current_count - last_count).unsigned_abs();
+        // Universal Clipboard items from another Mac never count.
+        let has_text = pasteboard_has_text() && !pasteboard_is_remote();
         last_count = current_count;
+        pending = None;
+
+        let shaped = is_active()
+            && has_text
+            && ((jump == 1 && time_diff < DOUBLE_TAP_WINDOW_MS && last_change_time > 0 && last_had_text)
+                || jump >= 2);
+        last_had_text = has_text;
+        last_change_time = if has_text { now } else { 0 };
+
+        if shaped {
+            if recent_double_tap(now) {
+                if fire(&app) {
+                    last_change_time = 0;
+                }
+            } else {
+                pending = Some(now);
+            }
+        }
     }
 }
 
-/// Observe ⌘C globally (requires Accessibility; never consumes the event).
-#[cfg(target_os = "macos")]
-fn install_key_monitor(_app: &AppHandle) -> bool {
-    if !crate::native::accessibility_trusted() {
+/// Show the picker (or auto-send) with the clipboard text. Returns true if it
+/// fired; the tap chain is reset so a third copy doesn't re-trigger.
+fn fire(app: &AppHandle) -> bool {
+    let text = get_clipboard_text();
+    if text.is_empty() {
         return false;
     }
+    clear_taps();
+    log::info!("double-copy detected ({} chars)", text.chars().count());
+    let source_app = crate::native::frontmost_app_name();
+    if let Some(state) = app.try_state::<crate::delivery::PickerState>() {
+        if let Ok(mut s) = state.0.lock() {
+            s.payload = Some(crate::delivery::Payload::Text { text });
+            s.source_app = source_app;
+        }
+    }
+    let auto_first = app
+        .try_state::<crate::app_settings::AppSettingsStore>()
+        .map(|s| s.get().auto_send_first)
+        .unwrap_or(false);
+    let app2 = app.clone();
+    if auto_first {
+        let _ = app.run_on_main_thread(move || {
+            if let Err(e) = crate::commands::pick_destination_by_index(&app2, 0) {
+                log::warn!("auto-send to first destination failed: {}", e);
+            }
+        });
+    } else {
+        let (cx, cy) = crate::panel::get_cursor_topleft_pos();
+        let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
+    }
+    true
+}
+
+/// Observe plain ⌘C globally (requires Accessibility; never consumes the event).
+/// Must run on the main thread.
+#[cfg(target_os = "macos")]
+fn install_key_monitor() -> bool {
     use block2::RcBlock;
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject};
@@ -214,8 +249,31 @@ fn install_key_monitor(_app: &AppHandle) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn install_key_monitor(_app: &AppHandle) -> bool {
+fn install_key_monitor() -> bool {
     false
+}
+
+/// Universal Clipboard (Handoff) marks items copied on another device.
+fn pasteboard_is_remote() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc::runtime::Object;
+        use objc::{msg_send, sel, sel_impl};
+        let cls = objc::runtime::Class::get("NSPasteboard").unwrap();
+        let pb: *mut Object = msg_send![cls, generalPasteboard];
+        let ns_string_cls = objc::runtime::Class::get("NSString").unwrap();
+        let s = b"com.apple.is-remote-clipboard\0";
+        let remote_type: *mut Object = msg_send![ns_string_cls,
+            stringWithUTF8String: s.as_ptr() as *const std::os::raw::c_char];
+        let arr_cls = objc::runtime::Class::get("NSArray").unwrap();
+        let types_arr: *mut Object = msg_send![arr_cls, arrayWithObject: remote_type];
+        let available: *mut Object = msg_send![pb, availableTypeFromArray: types_arr];
+        !available.is_null()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 /// Check if the pasteboard contains text content (avoids crash on file/image-only clipboard)
