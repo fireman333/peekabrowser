@@ -119,6 +119,7 @@ interface Diagnostics {
   total_pages: number;
   system_glass: boolean;
   accessibility_trusted: boolean;
+  double_copy_active: boolean;
 }
 
 async function setupPowerSettings() {
@@ -172,6 +173,10 @@ async function setupPowerSettings() {
   onLangChange((l) => { language.value = l; });
 
   const diag = document.getElementById("diagnostics")!;
+  const axRow = document.getElementById("copy-ax-row")!;
+  document.getElementById("copy-ax-open")!.addEventListener("click", () => {
+    invoke("open_accessibility_settings").catch(() => {});
+  });
   let last: Diagnostics | null = null;
   const render = () => {
     if (!last) return;
@@ -180,8 +185,9 @@ async function setupPowerSettings() {
       t("diag.status", { loaded: d.loaded_pages, total: d.total_pages }),
       d.activity_work ? t("diag.activity", { n: d.activity_work }) : t("diag.noActivity"),
       t("diag.material", { m: d.system_glass ? "Liquid Glass" : t("diag.vibrancy") }),
-      d.accessibility_trusted ? t("diag.keyTriggered") : t("diag.sampling"),
+      d.double_copy_active ? t("diag.keyTriggered") : t("diag.copyOff"),
     ].join(" · ");
+    axRow.classList.toggle("hidden", d.double_copy_active);
   };
   const refresh = async () => {
     try {

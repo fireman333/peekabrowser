@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_2.0.3_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.3_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_2.0.4_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.4_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
    ```bash
@@ -205,7 +205,7 @@ Peekabrowser 支援多螢幕環境。側邊欄會出現在滑鼠所在的螢幕�
 
 - **紀錄：** 每次傳送都會記下原文（或截圖）、prompt、目的地與來源 App。按側邊欄的保存按鈕或 `⌘⇧E` 保存回答；在「紀錄」視窗可搜尋、收藏、加標籤／筆記、重新開啟對話、匯出 Markdown 或刪除。
 - **省電：** 隱藏時不輪詢滑鼠與剪貼簿；只有正在生成的回答會讓 App 保持活躍。背景頁面閒置一段時間（預設 5 分鐘）會卸載但保留在列表中，點一下即可恢復。設定中可關閉「左緣顯示」與原生材質。
-- **輔助使用（選用）：** 在「系統設定 → 隱私與安全性 → 輔助使用」允許 Peekabrowser 後，`⌘C⌘C` 改由按鍵事件觸發，待機更省電。
+- **輔助使用（`⌘C⌘C` 必要）：** 在「系統設定 → 隱私權與安全性 → 輔助使用」允許 Peekabrowser，`⌘C⌘C` 才會啟用（用來辨認真的連按兩次 `⌘C`）。更新後若設定頁仍顯示未啟用，請把 Peekabrowser 從清單移除再重新加入。
 
 ### 更新
 
@@ -237,7 +237,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_2.0.3_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.3_x64.dmg` (Intel)
+1. Open `Peekabrowser_2.0.4_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.4_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
    ```bash
@@ -431,7 +431,7 @@ All settings are stored locally on your machine:
 
 - **Records:** each query stores the original text (or screenshot), prompt, destination and source app. Save the answer with the sidebar save button or `⌘⇧E`; the Records window offers search, favorites, tags/notes, reopen, Markdown export and delete.
 - **Power:** no mouse or clipboard polling while hidden; only a generating answer keeps the app awake. Background pages unload after an idle period (default 5 min) but stay listed and restore on click. Edge reveal and native material can be turned off in Settings.
-- **Accessibility (optional):** allow Peekabrowser under System Settings → Privacy & Security → Accessibility to make `⌘C⌘C` key-triggered (lower idle cost).
+- **Accessibility (required for `⌘C⌘C`):** allow Peekabrowser under System Settings → Privacy & Security → Accessibility; `⌘C⌘C` only works with it (it recognises two real `⌘C` presses). If Settings still shows it as off after an update, remove Peekabrowser from the list and add it again.
 
 ### Updates
 
@@ -458,6 +458,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 ---
 
 ### 版本紀錄
+
+**v2.0.4** — `⌘C ⌘C` 改為只認真的連按兩次 `⌘C`：沒有「輔助使用」權限時停用，不再被複製按鈕或另一台 Mac 傳來的剪貼簿誤觸
 
 **v2.0.3** — 修正 `⌘C ⌘C` 快速傳送容易誤觸：開啟「輔助使用」權限時，需真的連按兩次 `⌘C` 才會觸發
 
@@ -519,6 +521,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v2.0.4** — `⌘C ⌘C` now only fires on two real `⌘C` presses: it is off without Accessibility and no longer triggered by copy buttons or Universal Clipboard from another Mac
+
 **v2.0.3** — Fixed `⌘C ⌘C` quick send triggering by accident: with Accessibility granted, it now requires two real `⌘C` presses
 
 **v2.0.1** — Fixed the sidebar closing right after `⌘C ⌘C` auto-send when the cursor was on the right side of the screen
@@ -577,4 +581,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v2.0.3 | Built with [Tauri](https://tauri.app)
+Peekabrowser v2.0.4 | Built with [Tauri](https://tauri.app)

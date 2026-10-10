@@ -144,6 +144,7 @@ pub fn run() {
             commands::pick_destination,
             commands::hide_picker_panel,
             commands::open_settings_url,
+            commands::open_accessibility_settings,
             commands::open_settings_window,
             commands::get_pages,
             commands::switch_page,
