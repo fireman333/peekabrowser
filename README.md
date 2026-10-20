@@ -10,15 +10,11 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_2.0.4_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.4_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_2.0.5_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.5_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
-3. **重要：** 開啟終端機（Terminal），執行以下指令移除下載隔離標記：
-   ```bash
-   xattr -cr /Applications/Peekabrowser.app
-   ```
-4. 雙擊開啟 Peekabrowser，如果 macOS 提示「來自未識別的開發者」，前往 **系統設定 → 隱私與安全性**，點擊 **「仍要打開」**
+3. 雙擊開啟 Peekabrowser
 
-> **注意：** Peekabrowser 目前沒有 Apple 開發者簽名。從網路下載的 app 會被 macOS 加上隔離標記，可能顯示「已損毀」的錯誤訊息。執行步驟 3 的指令即可解決。這不會影響功能或安全性。
+> Peekabrowser 從 v2.0.5 起使用 Apple Developer ID 簽署並通過 Apple 公證（notarization），不需要再執行 `xattr` 指令。
 
 ### 系統需求
 
@@ -237,15 +233,11 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_2.0.4_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.4_x64.dmg` (Intel)
+1. Open `Peekabrowser_2.0.5_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.5_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
-3. **Important:** Open Terminal and run this command to remove the download quarantine flag:
-   ```bash
-   xattr -cr /Applications/Peekabrowser.app
-   ```
-4. Double-click to open Peekabrowser. If macOS shows "from an unidentified developer", go to **System Settings → Privacy & Security** and click **"Open Anyway"**
+3. Double-click to open Peekabrowser
 
-> **Note:** Peekabrowser is not signed with an Apple Developer certificate. Apps downloaded from the internet are flagged by macOS and may show an "app is damaged" error. Running the command in step 3 fixes this. It does not affect functionality or security.
+> Since v2.0.5 Peekabrowser is signed with an Apple Developer ID and notarized by Apple, so the `xattr` command is no longer needed.
 
 ### Requirements
 
@@ -459,6 +451,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### 版本紀錄
 
+**v2.0.5** — 改用 Apple Developer ID 簽署並通過 Apple 公證：下載後直接開啟，不再需要 `xattr` 指令；之後更新也不會再讓「輔助使用」授權失效（本次需重新授權一次）。Intel 版的 OCR 也修正為可用
+
 **v2.0.4** — `⌘C ⌘C` 改為只認真的連按兩次 `⌘C`：沒有「輔助使用」權限時停用，不再被複製按鈕或另一台 Mac 傳來的剪貼簿誤觸
 
 **v2.0.3** — 修正 `⌘C ⌘C` 快速傳送容易誤觸：開啟「輔助使用」權限時，需真的連按兩次 `⌘C` 才會觸發
@@ -521,6 +515,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v2.0.5** — Signed with an Apple Developer ID and notarized by Apple: opens directly after download with no `xattr` step, and future updates keep the Accessibility grant (re-grant once for this update). OCR now works on Intel Macs
+
 **v2.0.4** — `⌘C ⌘C` now only fires on two real `⌘C` presses: it is off without Accessibility and no longer triggered by copy buttons or Universal Clipboard from another Mac
 
 **v2.0.3** — Fixed `⌘C ⌘C` quick send triggering by accident: with Accessibility granted, it now requires two real `⌘C` presses
@@ -581,4 +577,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v2.0.4 | Built with [Tauri](https://tauri.app)
+Peekabrowser v2.0.5 | Built with [Tauri](https://tauri.app)
