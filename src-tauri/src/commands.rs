@@ -1180,8 +1180,8 @@ pub fn get_diagnostics(tab_manager: State<std::sync::Mutex<WebViewTabManager>>) 
 }
 
 #[tauri::command]
-pub fn open_accessibility_settings() {
-    crate::permissions::open_accessibility_settings();
+pub fn regrant_accessibility(app: AppHandle) {
+    crate::permissions::regrant_accessibility(&app.config().identifier);
 }
 
 #[tauri::command]

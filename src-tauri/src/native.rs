@@ -147,6 +147,28 @@ pub fn accessibility_trusted() -> bool {
     }
 }
 
+/// Show the system "would like to control this computer" prompt (adds the app
+/// to the Accessibility list, switched off) unless already trusted.
+pub fn prompt_accessibility() {
+    #[cfg(target_os = "macos")]
+    {
+        use core_foundation::base::TCFType;
+        use core_foundation::boolean::CFBoolean;
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::string::{CFString, CFStringRef};
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            static kAXTrustedCheckOptionPrompt: CFStringRef;
+            fn AXIsProcessTrustedWithOptions(options: core_foundation::dictionary::CFDictionaryRef) -> bool;
+        }
+        unsafe {
+            let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+            let opts = CFDictionary::from_CFType_pairs(&[(key, CFBoolean::true_value())]);
+            AXIsProcessTrustedWithOptions(opts.as_concrete_TypeRef());
+        }
+    }
+}
+
 /// True when the system Liquid Glass view (macOS 26+) is available.
 pub fn has_system_glass() -> bool {
     #[cfg(target_os = "macos")]

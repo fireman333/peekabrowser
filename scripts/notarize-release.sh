@@ -1,7 +1,7 @@
 #!/bin/bash
-# Notarize + staple the signed .app, then build, sign, notarize and staple the custom DMG.
-# Run after `npx tauri build --target <triple>` for each arch.
-# Usage: ./scripts/notarize-release.sh [version]
+# Build both arches signed with Developer ID, notarize + staple each .app, then
+# build, sign, notarize and staple the custom DMG and write SHA256SUMS.
+# Usage: ./scripts/notarize-release.sh [version]   (SKIP_BUILD=1 to reuse existing builds)
 # Needs a notarytool keychain profile (default: peekabrowser-notary), created once with:
 #   xcrun notarytool store-credentials peekabrowser-notary --key <AuthKey_XXX.p8> --key-id <KEY_ID> --issuer <ISSUER_ID>
 # (App Store Connect API key; no Apple ID password needed)
@@ -19,6 +19,10 @@ mkdir -p "$OUT_DIR"
 
 for pair in "aarch64 aarch64-apple-darwin" "x64 x86_64-apple-darwin"; do
     read -r ARCH TRIPLE <<< "$pair"
+    if [ -z "$SKIP_BUILD" ]; then
+        echo "== $ARCH: building"
+        (cd "$PROJECT_DIR" && APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build --target "$TRIPLE")
+    fi
     BUNDLE_DIR="$PROJECT_DIR/src-tauri/target/$TRIPLE/release/bundle"
     APP="$BUNDLE_DIR/macos/Peekabrowser.app"
     DMG="$BUNDLE_DIR/dmg/Peekabrowser_${VERSION}_${ARCH}.dmg"

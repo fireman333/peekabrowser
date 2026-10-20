@@ -26,6 +26,9 @@ pub struct AppSettings {
     pub auto_install_updates: bool,
     /// Interface language: "zh-TW" (default) or "en".
     pub language: String,
+    /// The one-time permission cleanup for the switch to Developer ID signing
+    /// (v2.0.5) has run.
+    pub permissions_migrated: bool,
 }
 
 impl Default for AppSettings {
@@ -38,6 +41,7 @@ impl Default for AppSettings {
             auto_check_updates: true,
             auto_install_updates: false,
             language: "zh-TW".to_string(),
+            permissions_migrated: false,
         }
     }
 }
