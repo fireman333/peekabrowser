@@ -1,5 +1,5 @@
 #!/bin/bash
-# Package Peekabrowser.app + Install.command into a custom DMG
+# Package Peekabrowser.app into a drag-to-Applications DMG
 # Usage: ./scripts/package-dmg.sh [version] [arch] [target-triple]
 # Example: ./scripts/package-dmg.sh 1.8.0 aarch64 aarch64-apple-darwin
 
@@ -17,7 +17,6 @@ else
 fi
 APP_PATH="$BUNDLE_DIR/macos/Peekabrowser.app"
 DMG_OUTPUT="$BUNDLE_DIR/dmg/Peekabrowser_${VERSION}_${ARCH}.dmg"
-INSTALL_SCRIPT="$SCRIPT_DIR/Install.command"
 TEMP_DIR=$(mktemp -d)
 DMG_STAGE="$TEMP_DIR/dmg-stage"
 
@@ -33,12 +32,9 @@ fi
 # Create staging directory
 mkdir -p "$DMG_STAGE"
 
-# Copy app and install script
+# Copy app
 echo "   Copying Peekabrowser.app..."
 cp -R "$APP_PATH" "$DMG_STAGE/"
-echo "   Adding Install.command..."
-cp "$INSTALL_SCRIPT" "$DMG_STAGE/"
-chmod +x "$DMG_STAGE/Install.command"
 
 # Add Applications symlink for drag-and-drop install
 ln -s /Applications "$DMG_STAGE/Applications"
@@ -61,4 +57,4 @@ rm -rf "$TEMP_DIR"
 
 echo ""
 echo "✅ DMG created: $DMG_OUTPUT"
-echo "   Contents: Peekabrowser.app, Install.command, Applications (symlink)"
+echo "   Contents: Peekabrowser.app, Applications (symlink)"

@@ -170,8 +170,8 @@ pub fn bundle_path_for(exe: &Path) -> Result<PathBuf, String> {
     let s = bundle.to_string_lossy();
     if s.contains("/AppTranslocation/") {
         return Err(tr(
-            "macOS 目前從暫存位置執行本程式。請先把 Peekabrowser 移到「應用程式」資料夾（或執行 Install.command）。",
-            "macOS is running the app from a temporary location. Move Peekabrowser to Applications (or run Install.command) first.",
+            "macOS 目前從暫存位置執行本程式。請先把 Peekabrowser 移到「應用程式」資料夾。",
+            "macOS is running the app from a temporary location. Move Peekabrowser to Applications first.",
         )
         .into());
     }

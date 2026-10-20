@@ -451,7 +451,7 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### 版本紀錄
 
-**v2.0.6** — 從舊版更新後自動清掉失效的「輔助使用」／「螢幕錄製」授權並重新詢問，只要打開開關；設定裡的按鈕改為「重新授權」
+**v2.0.6** — 從舊版更新後自動清掉失效的「輔助使用」／「螢幕錄製」授權並重新詢問，只要打開開關；設定裡的按鈕改為「重新授權」；DMG 不再附 `Install.command`，直接拖曳安裝
 
 **v2.0.5** — 改用 Apple Developer ID 簽署並通過 Apple 公證：下載後直接開啟，不再需要 `xattr` 指令；之後更新也不會再讓「輔助使用」授權失效（本次需重新授權一次）。Intel 版的 OCR 也修正為可用
 
@@ -517,7 +517,7 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
-**v2.0.6** — After updating from an older version, stale Accessibility / Screen Recording grants are cleared and macOS asks again, so you only switch it on; the Settings button is now "Re-grant"
+**v2.0.6** — After updating from an older version, stale Accessibility / Screen Recording grants are cleared and macOS asks again, so you only switch it on; the Settings button is now "Re-grant"; the DMG no longer includes `Install.command`, just drag to install
 
 **v2.0.5** — Signed with an Apple Developer ID and notarized by Apple: opens directly after download with no `xattr` step, and future updates keep the Accessibility grant (re-grant once for this update). OCR now works on Intel Macs
 
