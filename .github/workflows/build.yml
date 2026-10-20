@@ -95,7 +95,10 @@ jobs:
   release:
     name: Publish release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+    # Releases are Developer ID signed + notarized locally (scripts/notarize-release.sh).
+    # CI builds are ad-hoc signed, so a tag push only builds; publishing from CI is
+    # manual and would replace the notarized assets.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

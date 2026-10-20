@@ -175,7 +175,7 @@ async function setupPowerSettings() {
   const diag = document.getElementById("diagnostics")!;
   const axRow = document.getElementById("copy-ax-row")!;
   document.getElementById("copy-ax-open")!.addEventListener("click", () => {
-    invoke("open_accessibility_settings").catch(() => {});
+    invoke("regrant_accessibility").catch(() => {});
   });
   let last: Diagnostics | null = null;
   const render = () => {

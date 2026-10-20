@@ -40,6 +40,9 @@ pub fn run() {
     };
 
     let records_dir = app_data_dir.clone();
+    // Checked before the stores below create their files on first run.
+    let returning_user = app_data_dir.join("destinations.json").exists()
+        || app_data_dir.join("settings.json").exists();
 
     tauri::Builder::default()
         .plugin(tauri_nspanel::init())
@@ -120,6 +123,28 @@ pub fn run() {
             // Start double-copy detector
             hotkeys::double_cmd_c::start_double_cmd_c_detector(handle.clone());
 
+            // Builds before v2.0.5 were ad-hoc signed, so their Accessibility / Screen
+            // Recording entries no longer match. Once, clear them and ask again.
+            {
+                let store = app.state::<app_settings::AppSettingsStore>();
+                let mut s = store.get();
+                if !s.permissions_migrated {
+                    s.permissions_migrated = true;
+                    store.update(s);
+                    let installed = std::env::current_exe()
+                        .map(|exe| updater::bundle_path_for(&exe).is_ok())
+                        .unwrap_or(false);
+                    if returning_user && installed {
+                        let id = app.config().identifier.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            permissions::regrant_accessibility(&id);
+                            permissions::clear_stale_screen_capture(&id);
+                        });
+                    }
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -144,7 +169,7 @@ pub fn run() {
             commands::pick_destination,
             commands::hide_picker_panel,
             commands::open_settings_url,
-            commands::open_accessibility_settings,
+            commands::regrant_accessibility,
             commands::open_settings_window,
             commands::get_pages,
             commands::switch_page,

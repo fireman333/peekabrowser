@@ -51,10 +51,10 @@ const DICT = {
   "copy.section": { "zh-TW": "⌘C ⌘C 快速傳送", en: "⌘C ⌘C Quick send" },
   "copy.axOff": { "zh-TW": "⌘C ⌘C 未啟用：需要「輔助使用」權限", en: "⌘C ⌘C is off: Accessibility is required" },
   "copy.axOffHelp": {
-    "zh-TW": "用來辨認真的連按兩次 ⌘C，避免複製按鈕或另一台 Mac 傳來的剪貼簿誤觸。若清單裡已勾選但仍顯示此訊息（常見於更新後），請把 Peekabrowser 移除再重新加入；授權後會自動啟用。",
-    en: "Used to recognise two real ⌘C presses, so copy buttons or clipboard items from another Mac can't trigger it. If Peekabrowser is already checked but this still shows (common after an update), remove it from the list and add it again; it turns on automatically once granted.",
+    "zh-TW": "用來辨認真的連按兩次 ⌘C，避免複製按鈕或另一台 Mac 傳來的剪貼簿誤觸。按「重新授權」後，在系統設定裡打開 Peekabrowser 的開關即可；授權後會自動啟用。",
+    en: "Used to recognise two real ⌘C presses, so copy buttons or clipboard items from another Mac can't trigger it. Click Re-grant, then switch Peekabrowser on in System Settings; it turns on automatically once granted.",
   },
-  "copy.axOpen": { "zh-TW": "開啟設定", en: "Open Settings" },
+  "copy.axOpen": { "zh-TW": "重新授權", en: "Re-grant" },
   "copy.autoFirst": { "zh-TW": "直接傳送到第一個目的地", en: "Send straight to the first destination" },
   "copy.autoFirstHelp": {
     "zh-TW": "開啟後，⌘C ⌘C 直接傳送到清單中的第一個目的地，不再顯示選單。關閉時，可在選單中按 C / V / B / N / M 快速選擇前五個（注音等輸入法下也可用）。",

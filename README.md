@@ -10,7 +10,7 @@ Peekabrowser 是一個輕量級的 macOS 側邊欄瀏覽器，讓你快速存取
 
 ### 安裝方式
 
-1. 開啟 `Peekabrowser_2.0.5_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.5_x64.dmg`（Intel）
+1. 開啟 `Peekabrowser_2.0.6_aarch64.dmg`（Apple Silicon）或 `Peekabrowser_2.0.6_x64.dmg`（Intel）
 2. 將 `Peekabrowser.app` 拖曳到「應用程式」資料夾
 3. 雙擊開啟 Peekabrowser
 
@@ -233,7 +233,7 @@ Peekabrowser is a lightweight macOS sidebar browser that gives you instant acces
 
 ### Installation
 
-1. Open `Peekabrowser_2.0.5_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.5_x64.dmg` (Intel)
+1. Open `Peekabrowser_2.0.6_aarch64.dmg` (Apple Silicon) or `Peekabrowser_2.0.6_x64.dmg` (Intel)
 2. Drag `Peekabrowser.app` to the Applications folder
 3. Double-click to open Peekabrowser
 
@@ -451,6 +451,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### 版本紀錄
 
+**v2.0.6** — 從舊版更新後自動清掉失效的「輔助使用」／「螢幕錄製」授權並重新詢問，只要打開開關；設定裡的按鈕改為「重新授權」；DMG 不再附 `Install.command`，直接拖曳安裝
+
 **v2.0.5** — 改用 Apple Developer ID 簽署並通過 Apple 公證：下載後直接開啟，不再需要 `xattr` 指令；之後更新也不會再讓「輔助使用」授權失效（本次需重新授權一次）。Intel 版的 OCR 也修正為可用
 
 **v2.0.4** — `⌘C ⌘C` 改為只認真的連按兩次 `⌘C`：沒有「輔助使用」權限時停用，不再被複製按鈕或另一台 Mac 傳來的剪貼簿誤觸
@@ -515,6 +517,8 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ### Release Notes
 
+**v2.0.6** — After updating from an older version, stale Accessibility / Screen Recording grants are cleared and macOS asks again, so you only switch it on; the Settings button is now "Re-grant"; the DMG no longer includes `Install.command`, just drag to install
+
 **v2.0.5** — Signed with an Apple Developer ID and notarized by Apple: opens directly after download with no `xattr` step, and future updates keep the Accessibility grant (re-grant once for this update). OCR now works on Intel Macs
 
 **v2.0.4** — `⌘C ⌘C` now only fires on two real `⌘C` presses: it is off without Accessibility and no longer triggered by copy buttons or Universal Clipboard from another Mac
@@ -577,4 +581,4 @@ Make sure Peekabrowser is running (icon in Menu Bar), then press `⌘⇧A` or mo
 
 ---
 
-Peekabrowser v2.0.5 | Built with [Tauri](https://tauri.app)
+Peekabrowser v2.0.6 | Built with [Tauri](https://tauri.app)
