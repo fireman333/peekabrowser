@@ -31,3 +31,6 @@ src-tauri/target
 
 # Claude Code project files
 .claude
+
+# Release artifacts
+release
