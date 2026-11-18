@@ -169,7 +169,8 @@ pub fn switch_destination(
     crate::lifecycle::switch_destination(&app, &dest)
 }
 
-/// Open a new tab for the given destination (always creates a new page).
+/// Open a new tab for the given destination (＋ / ⌘T / ⌘N). Refused once the
+/// destination has `MAX_PAGES_PER_DEST` tabs.
 #[tauri::command]
 pub fn new_tab(
     app: AppHandle,
@@ -179,7 +180,7 @@ pub fn new_tab(
     let dest = dest_manager
         .get_by_id(&id)
         .ok_or_else(|| format!("Destination '{}' not found", id))?;
-    crate::lifecycle::open_new_page(&app, &dest).map(|_| ())
+    crate::lifecycle::open_manual_tab(&app, &dest).map(|_| ())
 }
 
 /// Open a new tab for the currently active destination (called from page viewer's Cmd+N).
@@ -804,6 +805,7 @@ pub fn set_viewer_width(app: AppHandle, preset: String) {
         _ => (screen_width / 2.0, 0.70),
     };
     let viewer_width = (total_width - crate::panel::TAB_BAR_WIDTH).max(200.0);
+    crate::panel::set_width_preset(&preset);
     crate::panel::set_viewer_width_value(viewer_width);
     crate::panel::set_height_ratio(height_ratio);
     crate::panel::resize_panels(&app, viewer_width);
@@ -1264,4 +1266,280 @@ pub fn open_release_page() -> Result<(), String> {
         .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", crate::updater::REPO));
     std::process::Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ─── Chrome / tab commands (top chrome window and tab row) ─────────────────
+
+#[derive(Serialize)]
+pub struct ChromeState {
+    /// Live URL of the active page ("" when none).
+    url: String,
+    /// The active page's slot is loading (page-load Started without Finished).
+    loading: bool,
+    /// Entries on the reopen-closed-tab stack.
+    closed_count: usize,
+    /// A manual new tab is allowed for the active destination.
+    can_new_tab: bool,
+    /// "short" | "medium" | "long"
+    width_preset: String,
+    pinned: bool,
+}
+
+#[tauri::command]
+pub fn get_chrome_state(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>) -> ChromeState {
+    let (url, label, closed_count, can_new_tab) = tab_manager
+        .lock()
+        .map(|m| {
+            let active = m.get_active_page();
+            (
+                active.map(|p| p.url.clone()).unwrap_or_default(),
+                active.and_then(|p| p.label.clone()),
+                m.closed_count(),
+                active.map(|p| m.can_open_manual(&p.dest_id)).unwrap_or(false),
+            )
+        })
+        .unwrap_or_default();
+    // Prefer the live URL (SPA navigations update it without a page load).
+    let live = label
+        .as_ref()
+        .and_then(|l| app.get_webview_window(l))
+        .and_then(|w| w.url().ok())
+        .map(|u| u.to_string())
+        .filter(|u| u != "about:blank");
+    ChromeState {
+        url: live.unwrap_or(url),
+        loading: label.as_deref().map(crate::panel::is_slot_loading).unwrap_or(false),
+        closed_count,
+        can_new_tab,
+        width_preset: crate::panel::width_preset().to_string(),
+        pinned: crate::panel::hover_detector::is_pinned(),
+    }
+}
+
+/// Turn address-bar input into a URL: a URL as typed, a bare host with
+/// https://, anything else a Google search.
+fn address_to_url(input: &str) -> Option<String> {
+    let t = input.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Ok(u) = url::Url::parse(t) {
+        if matches!(u.scheme(), "http" | "https") {
+            return Some(u.to_string());
+        }
+    }
+    let looks_like_host = !t.contains(char::is_whitespace)
+        && (t.contains('.') || t.starts_with("localhost"))
+        && !t.starts_with('.')
+        && !t.ends_with('.');
+    if looks_like_host {
+        if let Ok(u) = url::Url::parse(&format!("https://{}", t)) {
+            return Some(u.to_string());
+        }
+    }
+    let mut u = url::Url::parse("https://www.google.com/search").ok()?;
+    u.query_pairs_mut().append_pair("q", t);
+    Some(u.to_string())
+}
+
+/// Address bar Enter: navigate the active page.
+#[tauri::command]
+pub fn chrome_navigate(app: AppHandle, input: String) -> Result<(), String> {
+    let url = address_to_url(&input).ok_or(tr("請輸入網址或關鍵字", "Type a URL or search words"))?;
+    crate::panel::navigate_active_viewer(&app, &url).map_err(|e| e.to_string())
+}
+
+/// Pointer entered the chrome: pick up SPA URL/title changes.
+#[tauri::command]
+pub fn refresh_chrome(app: AppHandle) {
+    crate::lifecycle::refresh_active_meta(&app);
+}
+
+#[tauri::command]
+pub fn reopen_closed_tab(app: AppHandle) -> Result<(), String> {
+    crate::lifecycle::reopen_closed(&app)
+}
+
+#[tauri::command]
+pub fn close_other_tabs(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) {
+    let ids = tab_manager.lock().map(|m| m.sibling_ids(&page_id, false)).unwrap_or_default();
+    // Keep the clicked tab: show it first so closing the others can't move the selection elsewhere.
+    let _ = crate::lifecycle::activate_page(&app, &page_id);
+    crate::lifecycle::close_pages(&app, &ids);
+}
+
+#[tauri::command]
+pub fn close_tabs_to_right(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) {
+    let ids = tab_manager.lock().map(|m| m.sibling_ids(&page_id, true)).unwrap_or_default();
+    crate::lifecycle::close_pages(&app, &ids);
+}
+
+/// ⌘⇧[ (delta -1) / ⌘⇧] (delta 1).
+#[tauri::command]
+pub fn cycle_tab(app: AppHandle, delta: i32) -> Result<(), String> {
+    crate::lifecycle::cycle_tab(&app, delta.signum())
+}
+
+/// URL of a page (live URL when it is loaded), or of the active page.
+fn page_url(app: &AppHandle, page_id: Option<&str>) -> Option<String> {
+    let m = app.state::<Mutex<WebViewTabManager>>();
+    let (url, label) = {
+        let m = m.lock().ok()?;
+        let p = match page_id {
+            Some(id) => m.get_page(id)?,
+            None => m.get_active_page()?,
+        };
+        (p.url.clone(), p.label.clone())
+    };
+    let live = label
+        .and_then(|l| app.get_webview_window(&l))
+        .and_then(|w| w.url().ok())
+        .map(|u| u.to_string())
+        .filter(|u| u != "about:blank");
+    Some(live.unwrap_or(url)).filter(|u| !u.is_empty())
+}
+
+#[tauri::command]
+pub fn copy_page_url(app: AppHandle, page_id: Option<String>) -> Result<(), String> {
+    let url = page_url(&app, page_id.as_deref()).ok_or(tr("沒有開啟中的頁面", "No active page"))?;
+    crate::delivery::copy_to_clipboard(&app, &url);
+    crate::lifecycle::notify(&app, tr("已複製網址", "URL copied"));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_page_in_browser(app: AppHandle, page_id: Option<String>) -> Result<(), String> {
+    let url = page_url(&app, page_id.as_deref()).ok_or(tr("沒有開啟中的頁面", "No active page"))?;
+    std::process::Command::new("open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Reload a tab: a loaded one in place; an unloaded one is shown (which loads it).
+#[tauri::command]
+pub fn reload_page(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) -> Result<(), String> {
+    let label = tab_manager.lock().map_err(|_| "lock")?.get_page(&page_id).map(|p| p.label.clone()).ok_or("page not found")?;
+    match label.and_then(|l| app.get_webview_window(&l)) {
+        Some(w) => w.eval("location.reload()").map_err(|e| e.to_string()),
+        None => crate::lifecycle::activate_page(&app, &page_id),
+    }
+}
+
+/// Keeps the last popped-up native menu alive until the next one.
+static CHROME_MENU: Mutex<Option<tauri::menu::Menu<tauri::Wry>>> = Mutex::new(None);
+
+fn popup(app: &AppHandle, menu: tauri::menu::Menu<tauri::Wry>, at: Option<(f64, f64)>) -> Result<(), String> {
+    let w = app.get_webview_window(crate::panel::CHROME_LABEL).ok_or("chrome window missing")?;
+    match at {
+        Some((x, y)) => w.popup_menu_at(&menu, tauri::LogicalPosition::new(x, y)),
+        None => w.popup_menu(&menu),
+    }
+    .map_err(|e| e.to_string())?;
+    if let Ok(mut g) = CHROME_MENU.lock() {
+        *g = Some(menu);
+    }
+    Ok(())
+}
+
+/// The ⋯ menu: capture, width S/M/L, reopen closed tab, copy URL.
+#[tauri::command]
+pub fn show_chrome_menu(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, x: f64, y: f64) -> Result<(), String> {
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let closed = tab_manager.lock().map(|m| m.closed_count()).unwrap_or(0);
+    let has_page = crate::panel::get_active_page_label().is_some();
+    let preset = crate::panel::width_preset();
+    let e = |e: tauri::Error| e.to_string();
+    let capture = MenuItem::with_id(&app, "chrome:capture", tr("截圖傳給 AI", "Screenshot to AI"), true, Some("CmdOrCtrl+Shift+S")).map_err(e)?;
+    let sep1 = PredefinedMenuItem::separator(&app).map_err(e)?;
+    let narrow = CheckMenuItem::with_id(&app, "chrome:width:short", tr("窄", "Narrow"), true, preset == "short", None::<&str>).map_err(e)?;
+    let medium = CheckMenuItem::with_id(&app, "chrome:width:medium", tr("中", "Medium"), true, preset == "medium", None::<&str>).map_err(e)?;
+    let wide = CheckMenuItem::with_id(&app, "chrome:width:long", tr("寬", "Wide"), true, preset == "long", None::<&str>).map_err(e)?;
+    let width = Submenu::with_items(&app, tr("面板寬度", "Panel width"), true, &[&narrow, &medium, &wide]).map_err(e)?;
+    let sep2 = PredefinedMenuItem::separator(&app).map_err(e)?;
+    let reopen = MenuItem::with_id(&app, "chrome:reopen", tr("重新開啟關閉的分頁", "Reopen closed tab"), closed > 0, Some("CmdOrCtrl+Shift+T")).map_err(e)?;
+    let copy = MenuItem::with_id(&app, "chrome:copy-url", tr("複製網址", "Copy URL"), has_page, None::<&str>).map_err(e)?;
+    let menu = Menu::with_items(&app, &[&capture, &sep1, &width, &sep2, &reopen, &copy]).map_err(e)?;
+    popup(&app, menu, Some((x, y)))
+}
+
+/// Right-click menu of a tab chip.
+#[tauri::command]
+pub fn show_tab_menu(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) -> Result<(), String> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let (can_close, has_others, has_right) = tab_manager
+        .lock()
+        .map(|m| {
+            (
+                !m.is_last_in_dest(&page_id),
+                !m.sibling_ids(&page_id, false).is_empty(),
+                !m.sibling_ids(&page_id, true).is_empty(),
+            )
+        })
+        .map_err(|_| "lock")?;
+    let e = |e: tauri::Error| e.to_string();
+    let id = |a: &str| format!("chrome:tab:{}:{}", a, page_id);
+    let close = MenuItem::with_id(&app, id("close"), tr("關閉分頁", "Close"), can_close, None::<&str>).map_err(e)?;
+    let others = MenuItem::with_id(&app, id("close-others"), tr("關閉其他分頁", "Close others"), has_others, None::<&str>).map_err(e)?;
+    let right = MenuItem::with_id(&app, id("close-right"), tr("關閉右側分頁", "Close to the right"), has_right, None::<&str>).map_err(e)?;
+    let sep = PredefinedMenuItem::separator(&app).map_err(e)?;
+    let copy = MenuItem::with_id(&app, id("copy-url"), tr("複製網址", "Copy URL"), true, None::<&str>).map_err(e)?;
+    let open = MenuItem::with_id(&app, id("open-browser"), tr("在預設瀏覽器開啟", "Open in default browser"), true, None::<&str>).map_err(e)?;
+    let reload = MenuItem::with_id(&app, id("reload"), tr("重新載入", "Reload"), true, None::<&str>).map_err(e)?;
+    let menu = Menu::with_items(&app, &[&close, &others, &right, &sep, &copy, &open, &reload]).map_err(e)?;
+    popup(&app, menu, None)
+}
+
+/// Handle a click in the chrome's native menus (ids prefixed "chrome:").
+pub fn handle_chrome_menu(app: &AppHandle, id: &str) {
+    let Some(rest) = id.strip_prefix("chrome:") else { return };
+    let mgr = app.state::<Mutex<WebViewTabManager>>();
+    match rest {
+        "capture" => take_screenshot(app.clone()),
+        "reopen" => {
+            let _ = crate::lifecycle::reopen_closed(app);
+        }
+        "copy-url" => {
+            let _ = copy_page_url(app.clone(), None);
+        }
+        _ if rest.starts_with("width:") => {
+            set_viewer_width(app.clone(), rest["width:".len()..].to_string());
+            if let Some(w) = app.get_webview_window(crate::panel::CHROME_LABEL) {
+                let _ = w.emit("chrome-state-changed", ());
+            }
+        }
+        _ if rest.starts_with("tab:") => {
+            let mut parts = rest["tab:".len()..].splitn(2, ':');
+            let (Some(action), Some(page_id)) = (parts.next(), parts.next()) else { return };
+            let page_id = page_id.to_string();
+            match action {
+                "close" => crate::lifecycle::close_page(app, &page_id),
+                "close-others" => close_other_tabs(app.clone(), mgr, page_id),
+                "close-right" => close_tabs_to_right(app.clone(), mgr, page_id),
+                "copy-url" => {
+                    let _ = copy_page_url(app.clone(), Some(page_id));
+                }
+                "open-browser" => {
+                    let _ = open_page_in_browser(app.clone(), Some(page_id));
+                }
+                "reload" => {
+                    let _ = reload_page(app.clone(), mgr, page_id);
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod chrome_tests {
+    use super::address_to_url;
+
+    #[test]
+    fn address_input_becomes_url_or_search() {
+        assert_eq!(address_to_url("https://claude.ai/new").as_deref(), Some("https://claude.ai/new"));
+        assert_eq!(address_to_url("example.com/a").as_deref(), Some("https://example.com/a"));
+        assert!(address_to_url("heart failure gdmt").unwrap().starts_with("https://www.google.com/search?q=heart+failure"));
+        assert!(address_to_url("javascript:alert(1)").unwrap().starts_with("https://www.google.com/search?q="));
+        assert_eq!(address_to_url("   "), None);
+    }
 }

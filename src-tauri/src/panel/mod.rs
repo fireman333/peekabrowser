@@ -51,7 +51,33 @@ const BROWSER_COMPAT_SCRIPT: &str = r#"
     try { _isGemini = location.hostname.includes('gemini.google.com'); } catch(e) {}
 
     // ─── Keyboard shortcuts (always active) ───
+    function _peekInvoke(cmd, args) {
+        try {
+            var internals = window.__TAURI_INTERNALS__;
+            if (internals && internals.invoke) internals.invoke(cmd, args || {});
+        } catch(err) {}
+    }
     document.addEventListener('keydown', function(e) {
+        var _k = (e.key || '').toLowerCase();
+        // Tab model: ⌘T new tab, ⌘⇧T reopen closed tab, ⌘⇧[ / ⌘⇧] previous / next tab.
+        if (e.metaKey && e.shiftKey && !e.altKey && !e.ctrlKey) {
+            if (_k === 't') {
+                e.preventDefault();
+                _peekInvoke('reopen_closed_tab');
+            } else if (e.code === 'BracketLeft') {
+                e.preventDefault();
+                _peekInvoke('cycle_tab', { delta: -1 });
+            } else if (e.code === 'BracketRight') {
+                e.preventDefault();
+                _peekInvoke('cycle_tab', { delta: 1 });
+            }
+            return;
+        }
+        if (e.metaKey && !e.altKey && !e.ctrlKey && _k === 't') {
+            e.preventDefault();
+            _peekInvoke('new_tab_for_active');
+            return;
+        }
         if (e.metaKey && e.key === 'r') {
             e.preventDefault();
             location.reload();
@@ -265,11 +291,146 @@ pub fn update_sidebar_corners(app: &AppHandle) {
 }
 pub const PICKER_LABEL: &str = "picker";
 
+// ─── Top chrome (address bar, navigation, tab row) ──────────────────────
+//
+// A separate NSPanel above the active page window, same x and width. The
+// page window moves down and shrinks by the chrome's height, so no web
+// content is covered. Every path that shows, hides, moves or resizes the
+// page also lays out the chrome (`sync_chrome`).
+
+pub const CHROME_LABEL: &str = "chrome";
+/// Row height (address capsule / nav cluster / tab row).
+const CHROME_ROW: f64 = 44.0;
+const CHROME_GAP: f64 = 6.0;
+const CHROME_MARGIN: f64 = 8.0;
+
+/// Whether the tab row (second chrome row) is shown.
+static CHROME_TAB_ROW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether the chrome panel is currently ordered in.
+static CHROME_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Viewer slots currently loading (page-load Started without Finished).
+static LOADING_SLOTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Last chosen width preset ("short" | "medium" | "long").
+static WIDTH_PRESET: Mutex<&'static str> = Mutex::new("medium");
+
+pub fn chrome_height() -> f64 {
+    let rows = if CHROME_TAB_ROW.load(std::sync::atomic::Ordering::SeqCst) {
+        2.0 * CHROME_ROW + CHROME_GAP
+    } else {
+        CHROME_ROW
+    };
+    rows + 2.0 * CHROME_MARGIN
+}
+
+pub fn set_width_preset(preset: &str) {
+    let p = match preset {
+        "short" => "short",
+        "long" => "long",
+        _ => "medium",
+    };
+    if let Ok(mut g) = WIDTH_PRESET.lock() {
+        *g = p;
+    }
+}
+
+pub fn width_preset() -> &'static str {
+    WIDTH_PRESET.lock().map(|g| *g).unwrap_or("medium")
+}
+
+pub fn set_slot_loading(label: &str, loading: bool) {
+    if let Ok(mut g) = LOADING_SLOTS.lock() {
+        g.retain(|l| l != label);
+        if loading {
+            g.push(label.to_string());
+        }
+    }
+}
+
+pub fn is_slot_loading(label: &str) -> bool {
+    LOADING_SLOTS.lock().map(|g| g.iter().any(|l| l == label)).unwrap_or(false)
+}
+
+/// Frame of the active page window: right of the rail, below the chrome.
+fn page_frame() -> (f64, f64, f64, f64) {
+    let sx = current_screen_x();
+    let (panel_height, panel_y) = panel_geometry();
+    let ch = chrome_height();
+    (sx + TAB_BAR_WIDTH, panel_y + ch, get_viewer_width(), (panel_height - ch).max(100.0))
+}
+
+/// Set the tab-row flag without relaying out, before a page is shown (so the
+/// page is placed at its final frame at once).
+pub fn prime_chrome_tab_row(show: bool) {
+    CHROME_TAB_ROW.store(show, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Show or hide the tab row. May be called from any thread with the tab
+/// manager locked, so the relayout is queued on the main thread.
+pub fn set_chrome_tab_row(app: &AppHandle, show: bool) {
+    let was = CHROME_TAB_ROW.swap(show, std::sync::atomic::Ordering::SeqCst);
+    if was != show {
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            sync_chrome(&app2);
+            if let Some(label) = get_active_page_label() {
+                if let Some(w) = app2.get_webview_window(&label) {
+                    let (x, y, vw, h) = page_frame();
+                    let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+                    let _ = w.set_size(tauri::LogicalSize::new(vw, h));
+                }
+            }
+        });
+    }
+}
+
+/// Place the chrome above the active page and order it in, or order it out
+/// when the panel is hidden or no page is shown. Never takes key status, so
+/// keyboard focus stays in the page.
+pub fn sync_chrome(app: &AppHandle) {
+    use std::sync::atomic::Ordering;
+    let want = is_panel_visible(app) && get_active_page_label().is_some();
+    if want {
+        let sx = current_screen_x();
+        let (_, panel_y) = panel_geometry();
+        if let Some(w) = app.get_webview_window(CHROME_LABEL) {
+            let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
+            let _ = w.set_size(tauri::LogicalSize::new(get_viewer_width(), chrome_height()));
+        }
+        if !CHROME_SHOWN.swap(true, Ordering::SeqCst) {
+            if let Ok(p) = app.get_webview_panel(CHROME_LABEL) {
+                p.order_front_regardless();
+            }
+        }
+    } else if CHROME_SHOWN.swap(false, Ordering::SeqCst) {
+        if let Ok(p) = app.get_webview_panel(CHROME_LABEL) {
+            p.order_out(None);
+        }
+    }
+}
+
+/// Create the top chrome panel (hidden until a page is shown).
+pub fn create_chrome_panel(app: &AppHandle) -> tauri::Result<()> {
+    let chrome = WebviewWindowBuilder::new(app, CHROME_LABEL, WebviewUrl::App("chrome.html".into()))
+        .title("Peekabrowser Toolbar")
+        .inner_size(VIEWER_WIDTH, chrome_height())
+        .position(-(TOTAL_WIDTH + 100.0), 0.0)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .build()?;
+    setup_panel(&chrome)?;
+    apply_material(app, &chrome, 0.0);
+    crate::native::set_rounded_corners(&chrome, PANEL_CORNER_RADIUS, crate::native::corners::TOP_RIGHT);
+    Ok(())
+}
+
 const PICKER_WIDTH: f64 = 210.0;
 const PICKER_HEIGHT: f64 = 360.0;
 
-/// Width of the tab bar (sidebar UI panel)
-pub const TAB_BAR_WIDTH: f64 = 56.0;
+/// Width of the rail (sidebar UI panel), iPad "medium" rail.
+pub const TAB_BAR_WIDTH: f64 = 76.0;
 /// Default viewer width (medium)
 pub const VIEWER_WIDTH: f64 = 340.0;
 /// Total sidebar width used for off-screen positioning
@@ -349,9 +510,7 @@ pub fn slot_generation(label: &str) -> Option<u64> {
 
 /// Create a brand-new viewer window (only when no pooled slot is available).
 pub fn create_viewer_window(app: &AppHandle, label: &str, url: &str) -> tauri::Result<()> {
-    let sx = current_screen_x();
-    let (panel_height, panel_y) = panel_geometry();
-    let viewer_width = get_viewer_width();
+    let (x, y, viewer_width, page_height) = page_frame();
 
     let webview_url = url
         .parse::<url::Url>()
@@ -362,8 +521,12 @@ pub fn create_viewer_window(app: &AppHandle, label: &str, url: &str) -> tauri::R
         .title("Peekabrowser Page")
         .user_agent(CHROME_UA)
         .initialization_script(BROWSER_COMPAT_SCRIPT)
-        .inner_size(viewer_width, panel_height)
-        .position(sx + TAB_BAR_WIDTH, panel_y)
+        .inner_size(viewer_width, page_height)
+        .position(x, y)
+        .on_page_load(|w, payload| {
+            let loading = matches!(payload.event(), tauri::webview::PageLoadEvent::Started);
+            crate::lifecycle::on_slot_load(w.app_handle(), w.label(), loading, payload.url().as_str());
+        })
         .decorations(false)
         .transparent(false)
         .always_on_top(true)
@@ -373,7 +536,8 @@ pub fn create_viewer_window(app: &AppHandle, label: &str, url: &str) -> tauri::R
         .build()?;
 
     setup_panel(&viewer)?;
-    crate::native::set_rounded_corners(&viewer, PANEL_CORNER_RADIUS, crate::native::corners::RIGHT);
+    // The chrome sits on top, so only the bottom-right corner is rounded.
+    crate::native::set_rounded_corners(&viewer, PANEL_CORNER_RADIUS, crate::native::corners::BOTTOM_RIGHT);
     register_page_label(label);
     bump_slot_generation(label);
 
@@ -399,9 +563,7 @@ pub fn navigate_slot(app: &AppHandle, label: &str, url: &str) -> tauri::Result<(
 
 /// Show a specific page viewer and hide all others.
 pub fn show_page_viewer(app: &AppHandle, label: &str) {
-    let sx = current_screen_x();
-    let (panel_height, panel_y) = panel_geometry();
-    let viewer_width = get_viewer_width();
+    let (x, y, viewer_width, page_height) = page_frame();
 
     // order_out keeps the WebView in place, so WebKit doesn't drop network
     // connections (e.g. Gemini's stream). Occluded windows get throttled
@@ -419,9 +581,12 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
         }
     }
 
+    set_active_page_label(label);
+    // Chrome first (without key status), then the page, which becomes key.
+    sync_chrome(app);
     if let Some(w) = app.get_webview_window(label) {
-        let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
-        let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+        let _ = w.set_size(tauri::LogicalSize::new(viewer_width, page_height));
         crate::native::set_media_suspended(&w, false);
         if is_panel_visible(app) {
             let _ = w.show();
@@ -433,7 +598,6 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
         }
     }
 
-    set_active_page_label(label);
     update_sidebar_corners(app);
 }
 
@@ -449,6 +613,8 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
 pub fn recycle_slot(app: &AppHandle, label: &str) {
     unregister_page_label(label);
     update_sidebar_corners(app);
+    sync_chrome(app);
+    set_slot_loading(label, false);
     // Any pending work for the previous page now sees a stale generation.
     bump_slot_generation(label);
 
@@ -720,6 +886,7 @@ fn show_panel_inner(app: &AppHandle) {
     let sx = current_screen_x();
     let (panel_height, panel_y) = panel_geometry();
     let viewer_width = get_viewer_width();
+    let (px, py, _, page_height) = page_frame();
 
     // Store actual panel bounds for hover detector
     if let Ok(mut g) = PANEL_BOUNDS_LEFT.lock() { *g = sx; }
@@ -737,11 +904,14 @@ fn show_panel_inner(app: &AppHandle) {
         p.show();
     }
 
+    // Chrome above the page (no key status), then the page itself.
+    sync_chrome(app);
+
     // Show active page viewer (if any) and thaw it
     if let Some(label) = get_active_page_label() {
         if let Some(w) = app.get_webview_window(&label) {
-            let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
-            let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
+            let _ = w.set_position(tauri::LogicalPosition::new(px, py));
+            let _ = w.set_size(tauri::LogicalSize::new(viewer_width, page_height));
             let _ = w.show();
             crate::native::set_media_suspended(&w, false);
         }
@@ -767,6 +937,7 @@ pub fn hide_panel(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(SIDEBAR_LABEL) {
         let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
     }
+    sync_chrome(app);
 
     // Hide all page viewers via order_out (don't move off-screen —
     // moving to -9999 causes WebKit to kill streaming connections).
@@ -921,10 +1092,12 @@ pub fn resize_panels(app: &AppHandle, viewer_width: f64) {
         let _ = w.set_size(tauri::LogicalSize::new(TAB_BAR_WIDTH, panel_height));
         let _ = w.set_position(tauri::LogicalPosition::new(sx, panel_y));
     }
+    sync_chrome(app);
     if let Some(label) = get_active_page_label() {
         if let Some(w) = app.get_webview_window(&label) {
-            let _ = w.set_size(tauri::LogicalSize::new(viewer_width, panel_height));
-            let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
+            let (x, y, _, page_height) = page_frame();
+            let _ = w.set_size(tauri::LogicalSize::new(viewer_width, page_height));
+            let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         }
     }
 }

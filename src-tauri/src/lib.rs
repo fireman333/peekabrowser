@@ -87,6 +87,11 @@ pub fn run() {
             // Create the sidebar NSPanel
             panel::create_sidebar_panel(&handle)?;
 
+            // Top chrome above the page (address bar, navigation, tab row) and
+            // its native menus (⋯, tab right-click).
+            panel::create_chrome_panel(&handle)?;
+            handle.on_menu_event(|app, event| commands::handle_chrome_menu(app, event.id().as_ref()));
+
             // Create the floating destination picker popup
             panel::create_picker_panel(&handle)?;
             picker_keys::install(&handle);
@@ -205,6 +210,19 @@ pub fn run() {
             commands::check_for_updates,
             commands::install_update,
             commands::open_release_page,
+            // chrome/tab commands
+            commands::get_chrome_state,
+            commands::chrome_navigate,
+            commands::refresh_chrome,
+            commands::reopen_closed_tab,
+            commands::close_other_tabs,
+            commands::close_tabs_to_right,
+            commands::cycle_tab,
+            commands::copy_page_url,
+            commands::open_page_in_browser,
+            commands::reload_page,
+            commands::show_chrome_menu,
+            commands::show_tab_menu,
         ])
         // Prevent page panel window close from exiting the app.
         // Settings window is allowed to close normally.
