@@ -1304,7 +1304,6 @@ pub struct ChromeState {
     can_new_tab: bool,
     /// "short" | "medium" | "long"
     width_preset: String,
-    pinned: bool,
 }
 
 #[tauri::command]
@@ -1334,12 +1333,31 @@ pub fn get_chrome_state(app: AppHandle, tab_manager: State<Mutex<WebViewTabManag
         closed_count,
         can_new_tab,
         width_preset: crate::panel::width_preset().to_string(),
-        pinned: crate::panel::hover_detector::is_pinned(),
     }
 }
 
+/// Whether a typed host (with optional port / path) is this machine or the
+/// local network: localhost, *.localhost, loopback, private and link-local IPs.
+/// Such hosts usually run plain-HTTP dev servers.
+fn is_local_host(t: &str) -> bool {
+    let authority = t.split(['/', '?', '#']).next().unwrap_or("");
+    if let Some(rest) = authority.strip_prefix('[') {
+        // [IPv6]:port
+        let ip = rest.split(']').next().unwrap_or("");
+        return ip.parse::<std::net::Ipv6Addr>().map(|a| a.is_loopback()).unwrap_or(false);
+    }
+    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority).to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    host.parse::<std::net::Ipv4Addr>()
+        .map(|a| a.is_loopback() || a.is_private() || a.is_link_local())
+        .unwrap_or(false)
+}
+
 /// Turn address-bar input into a URL: a URL as typed, a bare host with
-/// https://, anything else a Google search.
+/// https:// (http:// for localhost and private addresses), anything else a
+/// Google search.
 fn address_to_url(input: &str) -> Option<String> {
     let t = input.trim();
     if t.is_empty() {
@@ -1351,11 +1369,12 @@ fn address_to_url(input: &str) -> Option<String> {
         }
     }
     let looks_like_host = !t.contains(char::is_whitespace)
-        && (t.contains('.') || t.starts_with("localhost"))
+        && (t.contains('.') || t.starts_with("localhost") || t.starts_with('['))
         && !t.starts_with('.')
         && !t.ends_with('.');
     if looks_like_host {
-        if let Ok(u) = url::Url::parse(&format!("https://{}", t)) {
+        let scheme = if is_local_host(t) { "http" } else { "https" };
+        if let Ok(u) = url::Url::parse(&format!("{}://{}", scheme, t)) {
             return Some(u.to_string());
         }
     }
@@ -1368,7 +1387,11 @@ fn address_to_url(input: &str) -> Option<String> {
 #[tauri::command]
 pub fn chrome_navigate(app: AppHandle, input: String) -> Result<(), String> {
     let url = address_to_url(&input).ok_or(tr("請輸入網址或關鍵字", "Type a URL or search words"))?;
-    crate::panel::navigate_active_viewer(&app, &url).map_err(|e| e.to_string())
+    crate::panel::navigate_active_viewer(&app, &url).map_err(|e| e.to_string())?;
+    if let Some(label) = crate::panel::get_active_page_label() {
+        crate::lifecycle::watch_navigation(&app, &label, &url);
+    }
+    Ok(())
 }
 
 /// Pointer entered the chrome: pick up SPA URL/title changes.
@@ -1439,7 +1462,7 @@ pub fn open_page_in_browser(app: AppHandle, page_id: Option<String>) -> Result<(
 /// Reload a tab: a loaded one in place; an unloaded one is shown (which loads it).
 #[tauri::command]
 pub fn reload_page(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) -> Result<(), String> {
-    let label = tab_manager.lock().map_err(|_| "lock")?.get_page(&page_id).map(|p| p.label.clone()).ok_or("page not found")?;
+    let label = tab_manager.lock().map_err(|_| "lock")?.get_page(&page_id).map(|p| p.label.clone()).ok_or(tr("找不到這個分頁", "Tab not found"))?;
     match label.and_then(|l| app.get_webview_window(&l)) {
         Some(w) => w.eval("location.reload()").map_err(|e| e.to_string()),
         None => crate::lifecycle::activate_page(&app, &page_id),
@@ -1450,7 +1473,7 @@ pub fn reload_page(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>,
 static CHROME_MENU: Mutex<Option<tauri::menu::Menu<tauri::Wry>>> = Mutex::new(None);
 
 fn popup(app: &AppHandle, menu: tauri::menu::Menu<tauri::Wry>, at: Option<(f64, f64)>) -> Result<(), String> {
-    let w = app.get_webview_window(crate::panel::CHROME_LABEL).ok_or("chrome window missing")?;
+    let w = app.get_webview_window(crate::panel::CHROME_LABEL).ok_or(tr("網址列視窗不見了", "The address bar window is missing"))?;
     match at {
         Some((x, y)) => w.popup_menu_at(&menu, tauri::LogicalPosition::new(x, y)),
         None => w.popup_menu(&menu),
@@ -1524,9 +1547,7 @@ pub fn handle_chrome_menu(app: &AppHandle, id: &str) {
         }
         _ if rest.starts_with("width:") => {
             set_viewer_width(app.clone(), rest["width:".len()..].to_string());
-            if let Some(w) = app.get_webview_window(crate::panel::CHROME_LABEL) {
-                let _ = w.emit("chrome-state-changed", ());
-            }
+            let _ = app.emit_to(crate::panel::CHROME_LABEL, "chrome-state-changed", ());
         }
         _ if rest.starts_with("tab:") => {
             let mut parts = rest["tab:".len()..].splitn(2, ':');
@@ -1550,6 +1571,9 @@ pub fn handle_chrome_menu(app: &AppHandle, id: &str) {
         }
         _ => {}
     }
+    // The native menu may have extended past the panel's edge, leaving the
+    // cursor outside it: restart the auto-hide grace period.
+    crate::panel::hover_detector::note_shown();
 }
 
 #[cfg(test)]
@@ -1563,5 +1587,24 @@ mod chrome_tests {
         assert!(address_to_url("heart failure gdmt").unwrap().starts_with("https://www.google.com/search?q=heart+failure"));
         assert!(address_to_url("javascript:alert(1)").unwrap().starts_with("https://www.google.com/search?q="));
         assert_eq!(address_to_url("   "), None);
+    }
+
+    #[test]
+    fn local_hosts_get_http() {
+        assert_eq!(address_to_url("localhost:3000").as_deref(), Some("http://localhost:3000/"));
+        assert_eq!(address_to_url("localhost").as_deref(), Some("http://localhost/"));
+        assert_eq!(address_to_url("app.localhost:5173/x").as_deref(), Some("http://app.localhost:5173/x"));
+        assert_eq!(address_to_url("127.0.0.1:8080/api").as_deref(), Some("http://127.0.0.1:8080/api"));
+        assert_eq!(address_to_url("192.168.1.10").as_deref(), Some("http://192.168.1.10/"));
+        assert_eq!(address_to_url("10.0.0.5:5173").as_deref(), Some("http://10.0.0.5:5173/"));
+        assert_eq!(address_to_url("172.20.1.1").as_deref(), Some("http://172.20.1.1/"));
+        assert_eq!(address_to_url("[::1]:3000").as_deref(), Some("http://[::1]:3000/"));
+        // Public addresses and names keep https.
+        assert_eq!(address_to_url("172.32.0.1").as_deref(), Some("https://172.32.0.1/"));
+        assert_eq!(address_to_url("8.8.8.8").as_deref(), Some("https://8.8.8.8/"));
+        assert_eq!(address_to_url("example.com:8443").as_deref(), Some("https://example.com:8443/"));
+        assert_eq!(address_to_url("localhost.example.com").as_deref(), Some("https://localhost.example.com/"));
+        // An explicit scheme is kept as typed.
+        assert_eq!(address_to_url("https://localhost:3000").as_deref(), Some("https://localhost:3000/"));
     }
 }

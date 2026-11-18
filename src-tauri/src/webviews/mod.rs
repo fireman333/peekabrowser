@@ -420,6 +420,8 @@ impl WebViewTabManager {
         let (removed, kept): (Vec<_>, Vec<_>) =
             self.pages.drain(..).partition(|p| p.dest_id == dest_id);
         self.pages = kept;
+        // Closed tabs of a removed destination can no longer be reopened.
+        self.closed.retain(|c| c.dest_id != dest_id);
         if let Some(ref active_id) = self.active_page_id {
             if !self.pages.iter().any(|p| &p.id == active_id) {
                 self.active_page_id = self.pages.iter().max_by_key(|p| p.last_viewed).map(|p| p.id.clone());
@@ -451,6 +453,25 @@ mod tests {
         let (p, ev) = m.create_page(dest, "D", "", &l, &format!("https://{}/{}", dest, l), |_| false);
         assert!(ev.is_none());
         p.id
+    }
+
+    #[test]
+    fn removing_a_destination_purges_its_reopen_entries() {
+        let mut m = WebViewTabManager::new();
+        let a1 = open(&mut m, "a");
+        let _a2 = open(&mut m, "a");
+        let b1 = open(&mut m, "b");
+        let _b2 = open(&mut m, "b");
+        let pa = m.get_page(&a1).unwrap().clone();
+        let pb = m.get_page(&b1).unwrap().clone();
+        m.push_closed(&pa);
+        m.push_closed(&pb);
+        m.push_closed(&pa);
+        assert_eq!(m.closed_count(), 3);
+        let removed = m.remove_pages_for_dest("a");
+        assert_eq!(removed.len(), 2);
+        assert_eq!(m.closed_count(), 1, "only b's entry is left");
+        assert_eq!(m.pop_closed().map(|c| c.dest_id).as_deref(), Some("b"));
     }
 
     #[test]

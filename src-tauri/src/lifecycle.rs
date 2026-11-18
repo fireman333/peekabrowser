@@ -61,12 +61,9 @@ fn unload_after(app: &AppHandle) -> Duration {
 pub fn emit_pages(app: &AppHandle, mgr: &WebViewTabManager) {
     let pages = mgr.get_all_pages();
     let active = mgr.active_page_id.clone().unwrap_or_default();
-    for label in [crate::panel::SIDEBAR_LABEL, crate::panel::CHROME_LABEL] {
-        if let Some(w) = app.get_webview_window(label) {
-            let _ = w.emit("pages-updated", &pages);
-            let _ = w.emit("active-page-changed", &active);
-        }
-    }
+    // `emit` is a broadcast: once reaches both the rail and the chrome.
+    let _ = app.emit("pages-updated", &pages);
+    let _ = app.emit("active-page-changed", &active);
     crate::panel::set_chrome_tab_row(app, mgr.active_dest_pages().len() >= 2);
 }
 
@@ -81,11 +78,8 @@ fn emit_now(app: &AppHandle) {
 /// Show `msg` in the sidebar (and as a macOS notification while it is hidden).
 /// Callers pass text already localized via `crate::i18n`.
 pub fn notify(app: &AppHandle, msg: &str) {
-    for label in [crate::panel::SIDEBAR_LABEL, crate::panel::CHROME_LABEL] {
-        if let Some(w) = app.get_webview_window(label) {
-            let _ = w.emit("notice", msg);
-        }
-    }
+    // Broadcast once; the rail and the chrome both listen.
+    let _ = app.emit("notice", msg);
     let visible = app.state::<Mgr>().lock().map(|m| m.panel_visible()).unwrap_or(false);
     if !visible {
         let script = format!(
@@ -183,7 +177,7 @@ pub fn activate_page(app: &AppHandle, page_id: &str) -> Result<(), String> {
     let (label, url) = {
         let mgr = app.state::<Mgr>();
         let mgr = mgr.lock().map_err(|_| "lock")?;
-        let p = mgr.get_page(page_id).ok_or("page not found")?;
+        let p = mgr.get_page(page_id).ok_or(crate::i18n::tr("找不到這個分頁", "Tab not found"))?;
         (p.label.clone(), p.url.clone())
     };
     let label = match label {
@@ -296,7 +290,16 @@ pub fn reopen_closed(app: &AppHandle) -> Result<(), String> {
             notify(app, &msg);
             return Err(msg);
         }
-        let page = open_new_page_at(app, &dest, &closed.url)?;
+        let page = match open_new_page_at(app, &dest, &closed.url) {
+            Ok(p) => p,
+            Err(e) => {
+                // Keep the entry so ⌘⇧T can try again.
+                if let Ok(mut m) = app.state::<Mgr>().lock() {
+                    m.push_closed_entry(closed);
+                }
+                return Err(e);
+            }
+        };
         if let Ok(mut m) = app.state::<Mgr>().lock() {
             m.update_meta(&page.id, Some(&closed.title), None);
             if let Some(q) = &closed.query_id {
@@ -321,7 +324,12 @@ pub fn cycle_tab(app: &AppHandle, delta: i32) -> Result<(), String> {
 /// line, and on finish remember the page's URL and title.
 pub fn on_slot_load(app: &AppHandle, label: &str, loading: bool, url: &str) {
     let blank = url.is_empty() || url == "about:blank";
-    crate::panel::set_slot_loading(label, loading && !blank);
+    if loading && !blank {
+        let token = crate::panel::slot_load_started(label);
+        watch_load_timeout(app, label, token);
+    } else {
+        crate::panel::set_slot_loading(label, false);
+    }
     if let Some(w) = app.get_webview_window(crate::panel::CHROME_LABEL) {
         let _ = w.emit(
             "chrome-load",
@@ -334,16 +342,66 @@ pub fn on_slot_load(app: &AppHandle, label: &str, loading: bool, url: &str) {
     let app = app.clone();
     let label = label.to_string();
     let url = url.to_string();
+    // The slot may be recycled for another page while the title is read.
+    let generation = crate::panel::slot_generation(&label);
+    let page_id = app.state::<Mgr>().lock().ok().and_then(|m| m.page_id_for_label(&label));
     std::thread::spawn(move || {
         let title = app
             .get_webview_window(&label)
             .and_then(|w| crate::native::eval_blocking(&w, "String(document.title || '')", Duration::from_secs(2)));
+        if crate::panel::slot_generation(&label) != generation {
+            return;
+        }
         if let Ok(mut m) = app.state::<Mgr>().lock() {
-            if let Some(pid) = m.page_id_for_label(&label) {
+            if let Some(pid) = m.page_id_for_label(&label).filter(|p| Some(p) == page_id.as_ref()) {
                 m.update_meta(&pid, title.as_deref().filter(|t| !t.is_empty()), Some(&url));
             }
         }
         emit_now(&app);
+    });
+}
+
+/// A load that never finishes (wry reports no failures) would keep the
+/// chrome's loading line running; clear it after this long.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn watch_load_timeout(app: &AppHandle, label: &str, token: u64) {
+    let app = app.clone();
+    let label = label.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(LOAD_TIMEOUT);
+        if crate::panel::clear_stale_loading(&label, token) {
+            log::info!("load in {} did not finish within {:?}; loading line cleared", label, LOAD_TIMEOUT);
+            let _ = app.emit_to(
+                crate::panel::CHROME_LABEL,
+                "chrome-load",
+                serde_json::json!({ "label": label, "loading": false, "url": "" }),
+            );
+        }
+    });
+}
+
+/// After an address-bar navigation: if no page load has even started in
+/// `label` after a while (DNS failure, refused connection, bad certificate),
+/// tell the user instead of leaving the old page silently in place.
+pub fn watch_navigation(app: &AppHandle, label: &str, target_url: &str) {
+    const NAV_TIMEOUT: Duration = Duration::from_secs(15);
+    let app = app.clone();
+    let label = label.to_string();
+    let target_url = target_url.to_string();
+    let before = crate::panel::last_load_token(&label);
+    let generation = crate::panel::slot_generation(&label);
+    std::thread::spawn(move || {
+        std::thread::sleep(NAV_TIMEOUT);
+        if crate::panel::slot_generation(&label) != generation || crate::panel::last_load_token(&label) != before {
+            return; // recycled, or a load started (it reports itself)
+        }
+        let now = app.get_webview_window(&label).and_then(|w| w.url().ok()).map(|u| u.to_string());
+        if now.as_deref() == Some(target_url.as_str()) {
+            return;
+        }
+        log::info!("navigation of {} to {} never started", label, target_url);
+        notify(&app, crate::i18n::tr("無法開啟這個網址", "Couldn't open this address"));
     });
 }
 

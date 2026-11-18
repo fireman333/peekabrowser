@@ -142,8 +142,76 @@ impl TapDetector {
 /// the layout has changed and no tap fires (conservative: better silent than
 /// firing on three-finger swipes). Touch `state` is not used.
 const MT_TOUCH_STRIDE: usize = 96;
+const MT_TOUCH_FRAME: usize = 0;
+const MT_TOUCH_TIMESTAMP: usize = 8;
+const MT_TOUCH_STATE: usize = 20;
 const MT_TOUCH_POS_X: usize = 32;
 const MT_TOUCH_POS_Y: usize = 36;
+
+/// Runtime check of the assumed layout: the first frames with two or more
+/// touches are cross-checked (every record's `frame` equals the callback's,
+/// its `timestamp` is close to the callback's, `state` is 1–7). Enough
+/// consistent frames mark the layout verified (no more checks); repeated
+/// mismatches turn the feature off for this run, with one log line, rather
+/// than reading the wrong fields (or past the buffer, if the stride shrank).
+const LAYOUT_UNVERIFIED: u8 = 0;
+const LAYOUT_OK: u8 = 1;
+const LAYOUT_BAD: u8 = 2;
+const LAYOUT_FRAMES_TO_TRUST: u32 = 5;
+const LAYOUT_FRAMES_TO_REJECT: u32 = 3;
+static LAYOUT_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(LAYOUT_UNVERIFIED);
+static LAYOUT_GOOD_FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static LAYOUT_BAD_FRAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Whether one MTTouch record's header agrees with the callback arguments.
+pub fn touch_record_consistent(rec_frame: i32, rec_timestamp: f64, rec_state: i32, frame: i32, timestamp: f64) -> bool {
+    rec_frame == frame
+        && rec_timestamp.is_finite()
+        && (rec_timestamp - timestamp).abs() < 1.0
+        && (1..=7).contains(&rec_state)
+}
+
+/// Feed one frame to the layout check; returns false once the layout is
+/// known to be wrong (callers then ignore the frame).
+fn layout_usable(touches: *const u8, n: usize, frame: i32, timestamp: f64) -> bool {
+    use std::sync::atomic::Ordering::SeqCst;
+    match LAYOUT_STATE.load(SeqCst) {
+        LAYOUT_OK => return true,
+        LAYOUT_BAD => return false,
+        _ => {}
+    }
+    if n < 2 || touches.is_null() {
+        return true; // a single record cannot reveal a stride change
+    }
+    let consistent = (0..n).all(|i| unsafe {
+        // SAFETY: as in contact_frame; only header fields of each record.
+        let base = touches.add(i * MT_TOUCH_STRIDE);
+        touch_record_consistent(
+            std::ptr::read_unaligned(base.add(MT_TOUCH_FRAME) as *const i32),
+            std::ptr::read_unaligned(base.add(MT_TOUCH_TIMESTAMP) as *const f64),
+            std::ptr::read_unaligned(base.add(MT_TOUCH_STATE) as *const i32),
+            frame,
+            timestamp,
+        )
+    });
+    if consistent {
+        if LAYOUT_GOOD_FRAMES.fetch_add(1, SeqCst) + 1 >= LAYOUT_FRAMES_TO_TRUST {
+            LAYOUT_STATE.store(LAYOUT_OK, SeqCst);
+            log::info!("three-finger: MTTouch layout verified");
+        }
+        true
+    } else if LAYOUT_BAD_FRAMES.fetch_add(1, SeqCst) + 1 >= LAYOUT_FRAMES_TO_REJECT {
+        if LAYOUT_STATE.swap(LAYOUT_BAD, SeqCst) != LAYOUT_BAD {
+            log::error!(
+                "three-finger: MTTouch layout does not match this macOS version (stride {}); lookup taps disabled",
+                MT_TOUCH_STRIDE
+            );
+        }
+        false
+    } else {
+        false
+    }
+}
 
 type MTDeviceRef = *mut c_void;
 type ContactCallback = extern "C" fn(MTDeviceRef, *const u8, i32, f64, i32) -> i32;
@@ -246,8 +314,11 @@ fn accessibility_ok(app: &AppHandle) -> bool {
 
 /// Called by MultitouchSupport on its private thread for every touch frame.
 /// Must stay cheap and must never touch UI.
-extern "C" fn contact_frame(device: MTDeviceRef, touches: *const u8, count: i32, timestamp: f64, _frame: i32) -> i32 {
+extern "C" fn contact_frame(device: MTDeviceRef, touches: *const u8, count: i32, timestamp: f64, frame: i32) -> i32 {
     let n = count.max(0) as usize;
+    if !layout_usable(touches, n, frame, timestamp) {
+        return 0;
+    }
     let centroid = if n == 0 || touches.is_null() {
         None
     } else {
@@ -471,6 +542,16 @@ fn ensure_wake_observer(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn touch_record_header_check() {
+        assert!(touch_record_consistent(42, 1000.25, 4, 42, 1000.3));
+        assert!(!touch_record_consistent(41, 1000.25, 4, 42, 1000.3), "frame mismatch");
+        assert!(!touch_record_consistent(42, 1003.0, 4, 42, 1000.3), "timestamp far off");
+        assert!(!touch_record_consistent(42, f64::NAN, 4, 42, 1000.3));
+        assert!(!touch_record_consistent(42, 1000.25, 0, 42, 1000.3), "state out of range");
+        assert!(!touch_record_consistent(42, 1000.25, 9, 42, 1000.3));
+    }
 
     const C: Option<(f32, f32)> = Some((0.5, 0.5));
 

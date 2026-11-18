@@ -310,6 +310,9 @@ static CHROME_TAB_ROW: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 static CHROME_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Viewer slots currently loading (page-load Started without Finished).
 static LOADING_SLOTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Per slot: token of its latest page-load Started (tokens only grow).
+static LOAD_TOKENS: Mutex<Option<std::collections::HashMap<String, u64>>> = Mutex::new(None);
+static NEXT_LOAD_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 /// Last chosen width preset ("short" | "medium" | "long").
 static WIDTH_PRESET: Mutex<&'static str> = Mutex::new("medium");
 
@@ -348,6 +351,33 @@ pub fn set_slot_loading(label: &str, loading: bool) {
 
 pub fn is_slot_loading(label: &str) -> bool {
     LOADING_SLOTS.lock().map(|g| g.iter().any(|l| l == label)).unwrap_or(false)
+}
+
+/// A page load started in `label`: mark it loading and return a token that
+/// identifies this load (see [`clear_stale_loading`]).
+pub fn slot_load_started(label: &str) -> u64 {
+    let token = NEXT_LOAD_TOKEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut g) = LOAD_TOKENS.lock() {
+        g.get_or_insert_with(std::collections::HashMap::new).insert(label.to_string(), token);
+    }
+    set_slot_loading(label, true);
+    token
+}
+
+/// Token of the latest load started in `label` (0 if none yet).
+pub fn last_load_token(label: &str) -> u64 {
+    LOAD_TOKENS.lock().ok().and_then(|g| g.as_ref()?.get(label).copied()).unwrap_or(0)
+}
+
+/// wry reports no load failures, so a load that never finishes would keep
+/// the loading line forever. Clears it if `token` is still the latest load
+/// of `label` and it is still loading; returns whether it did.
+pub fn clear_stale_loading(label: &str, token: u64) -> bool {
+    if last_load_token(label) != token || !is_slot_loading(label) {
+        return false;
+    }
+    set_slot_loading(label, false);
+    true
 }
 
 /// Frame of the active page window: right of the rail, below the chrome.
@@ -851,7 +881,16 @@ pub fn current_screen_size() -> (f64, f64) {
     (w, h)
 }
 
+/// Record where the panel is (read by the hover detector's auto-hide rule).
+fn store_panel_bounds(sx: f64, panel_y: f64, viewer_width: f64, panel_height: f64) {
+    if let Ok(mut g) = PANEL_BOUNDS_LEFT.lock() { *g = sx; }
+    if let Ok(mut g) = PANEL_BOUNDS_TOP.lock() { *g = panel_y; }
+    if let Ok(mut g) = PANEL_BOUNDS_RIGHT.lock() { *g = sx + TAB_BAR_WIDTH + viewer_width; }
+    if let Ok(mut g) = PANEL_BOUNDS_BOTTOM.lock() { *g = panel_y + panel_height; }
+}
+
 /// Get actual panel bounds (left, top, right, bottom) set by show_panel_inner
+/// and resize_panels
 pub fn panel_bounds() -> (f64, f64, f64, f64) {
     let left = PANEL_BOUNDS_LEFT.lock().map(|g| *g).unwrap_or(0.0);
     let top = PANEL_BOUNDS_TOP.lock().map(|g| *g).unwrap_or(0.0);
@@ -889,10 +928,7 @@ fn show_panel_inner(app: &AppHandle) {
     let (px, py, _, page_height) = page_frame();
 
     // Store actual panel bounds for hover detector
-    if let Ok(mut g) = PANEL_BOUNDS_LEFT.lock() { *g = sx; }
-    if let Ok(mut g) = PANEL_BOUNDS_TOP.lock() { *g = panel_y; }
-    if let Ok(mut g) = PANEL_BOUNDS_RIGHT.lock() { *g = sx + TAB_BAR_WIDTH + viewer_width; }
-    if let Ok(mut g) = PANEL_BOUNDS_BOTTOM.lock() { *g = panel_y + panel_height; }
+    store_panel_bounds(sx, panel_y, viewer_width, panel_height);
 
     // Show sidebar on current screen's left edge
     if let Some(w) = app.get_webview_window(SIDEBAR_LABEL) {
@@ -1087,6 +1123,8 @@ pub fn get_cursor_topleft_pos() -> (f64, f64) {
 pub fn resize_panels(app: &AppHandle, viewer_width: f64) {
     let sx = current_screen_x();
     let (panel_height, panel_y) = panel_geometry();
+    // Keep the hover detector's idea of the panel in step with its new size.
+    store_panel_bounds(sx, panel_y, viewer_width, panel_height);
 
     if let Some(w) = app.get_webview_window(SIDEBAR_LABEL) {
         let _ = w.set_size(tauri::LogicalSize::new(TAB_BAR_WIDTH, panel_height));
