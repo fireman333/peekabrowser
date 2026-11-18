@@ -45,13 +45,21 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
+/** High-resolution site icon (apple-touch-icon quality when the site has one).
+ * Google's s2 endpoint often returns a 16px favicon upscaled, which looks blurry. */
+export function faviconUrl(domain: string, displaySize: number): string {
+  const want = displaySize * 3;
+  const px = want <= 64 ? 64 : want <= 128 ? 128 : 256;
+  return `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(`https://${domain}`)}&size=${px}`;
+}
+
 /** Favicon (or emoji) for a destination, with a line-icon fallback. */
 export function destIcon(dest: { icon: string; url: string }, size = 24): string {
   if (dest.icon && dest.icon.trim()) return `<span class="emoji-icon" aria-hidden="true">${escapeHtml(dest.icon)}</span>`;
   try {
     const domain = new URL(dest.url).hostname;
     if (domain) {
-      return `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size * 2}" width="${size}" height="${size}" class="tab-favicon" alt="" data-fallback="globe">`;
+      return `<img src="${faviconUrl(domain, size)}" width="${size}" height="${size}" class="tab-favicon" alt="" data-fallback="globe">`;
     }
   } catch {
     /* fall through */
@@ -107,7 +115,7 @@ export function destTile(dest: { id: string; name: string; icon: string; url: st
   try {
     const domain = new URL(dest.url).hostname;
     if (domain && !dest.url.includes("system://")) {
-      return `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size * 2}" width="${size}" height="${size}" class="tab-favicon" alt="" data-fallback="mono" data-name="${escapeHtml(dest.name)}" data-id="${escapeHtml(dest.id)}">`;
+      return `<img src="${faviconUrl(domain, size)}" width="${size}" height="${size}" class="tab-favicon" alt="" data-fallback="mono" data-name="${escapeHtml(dest.name)}" data-id="${escapeHtml(dest.id)}">`;
     }
   } catch {
     /* fall through */

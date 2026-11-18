@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isImeKey } from "./ime";
 import { listen } from "@tauri-apps/api/event";
-import { escapeHtml } from "./icons";
+import { escapeHtml, faviconUrl } from "./icons";
 import { applyI18n, getLang, initI18n, normalizeLang, onLangChange, setLang, t, type Lang } from "./i18n";
 
 interface Destination {
@@ -374,7 +374,7 @@ function iconHtml(d: Destination): string {
   try {
     const host = new URL(d.url).hostname;
     if (host) {
-      return `<span class="icon" data-letter="${letter}" data-color="${tileColor(d.name)}"><img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64" width="28" height="28" alt=""></span>`;
+      return `<span class="icon" data-letter="${letter}" data-color="${tileColor(d.name)}"><img src="${faviconUrl(host, 28)}" width="28" height="28" alt=""></span>`;
     }
   } catch { /* fall through to monogram */ }
   return `<span class="icon" style="background:${tileColor(d.name)};color:#fff;font-weight:600;font-size:14px">${letter}</span>`;
@@ -471,7 +471,7 @@ function renderPresets() {
     if (p.icon && p.icon.trim()) {
       chip.textContent = `${p.icon} ${p.name}`;
     } else {
-      chip.innerHTML = `<img src="https://www.google.com/s2/favicons?domain=${new URL(p.url).hostname}&sz=32" width="16" height="16" alt="" style="vertical-align:middle"> ${escapeHtml(p.name)}`;
+      chip.innerHTML = `<img src="${faviconUrl(new URL(p.url).hostname, 16)}" width="16" height="16" alt="" style="vertical-align:middle"> ${escapeHtml(p.name)}`;
       chip.querySelector("img")!.addEventListener("error", (e) => (e.target as HTMLElement).replaceWith(document.createTextNode("🌐")));
     }
     chip.addEventListener("click", () => {

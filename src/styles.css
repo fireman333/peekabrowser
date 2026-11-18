@@ -137,6 +137,15 @@ html, body {
   object-fit: contain;
 }
 
+/* iPad-style site tile: the logo sits on a white rounded square. */
+.rail-icon > img.tab-favicon {
+  box-sizing: border-box;
+  padding: 4px;
+  background: #fff;
+  border-radius: 8px; /* 28 × 0.29 */
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
 .emoji-icon {
   line-height: 1;
 }
