@@ -168,7 +168,7 @@ function renderTabs() {
   rowTabs.classList.toggle("hidden", !show);
   chips.innerHTML = "";
   if (!show) return;
-  for (const p of tabs) chips.appendChild(chip(p, tabs.length));
+  for (const p of tabs) chips.appendChild(chip(p));
   sizeChips();
   chips.querySelector<HTMLElement>(".chip.selected")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
@@ -182,7 +182,7 @@ function sizeChips() {
   list.forEach((c) => (c.style.width = `${w}px`));
 }
 
-function chip(p: PageInfo, count: number): HTMLElement {
+function chip(p: PageInfo): HTMLElement {
   const el = document.createElement("div");
   const selected = p.id === activePageId;
   el.className = "chip";
@@ -190,7 +190,6 @@ function chip(p: PageInfo, count: number): HTMLElement {
   el.classList.toggle("unloaded", p.state === "unloaded");
   el.classList.toggle("generating", p.generating);
   el.classList.toggle("unseen", !p.generating && p.unseen);
-  el.classList.toggle("last", count <= 1);
   el.setAttribute("role", "tab");
   el.setAttribute("aria-selected", String(selected));
   el.tabIndex = selected ? 0 : -1;

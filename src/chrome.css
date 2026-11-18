@@ -378,10 +378,6 @@ html, body {
   color: var(--ink1);
 }
 
-.chip.last .chip-close {
-  display: none;
-}
-
 button:focus {
   outline: none;
 }

@@ -269,12 +269,14 @@ const DICT = {
   "chrome.noPage": { "zh-TW": "沒有開啟中的頁面", en: "No page open" },
   "chrome.nav": { "zh-TW": "瀏覽動作", en: "Page actions" },
   "chrome.openBrowser": { "zh-TW": "在預設瀏覽器開啟", en: "Open in default browser" },
-  "chrome.more": { "zh-TW": "更多：截圖、寬度、重新開啟分頁、複製網址", en: "More: capture, width, reopen tab, copy URL" },
+  "chrome.more": { "zh-TW": "更多：截圖、寬度、重新開啟分頁、複製網址、關閉分頁", en: "More: capture, width, reopen tab, copy URL, close tab" },
   "chrome.newTab": { "zh-TW": "新分頁（⌘T）", en: "New tab (⌘T)" },
   "chrome.newTabFull": { "zh-TW": "這個目的地已達 20 個分頁", en: "This destination has 20 tabs" },
   "chrome.tabs": { "zh-TW": "分頁", en: "Tabs" },
   "chrome.closeTab": { "zh-TW": "關閉分頁（⌘W）", en: "Close tab (⌘W)" },
   "chrome.closeNamed": { "zh-TW": "關閉「{name}」", en: "Close “{name}”" },
+  "empty.title": { "zh-TW": "沒有分頁", en: "No tabs" },
+  "empty.newTab": { "zh-TW": "新分頁", en: "New tab" },
   "chrome.unloaded": { "zh-TW": "已卸載，點一下重新載入", en: "unloaded, click to reload" },
 } satisfies Record<string, Entry>;
 

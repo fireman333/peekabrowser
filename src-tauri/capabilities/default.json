@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Peekabrowser's own bundled windows (local content only)",
-  "windows": ["sidebar", "chrome", "grip", "picker", "settings-window", "records-window", "system-config"],
+  "windows": ["sidebar", "chrome", "grip", "empty", "picker", "settings-window", "records-window", "system-config"],
   "permissions": [
     "core:default",
     "core:window:allow-create",

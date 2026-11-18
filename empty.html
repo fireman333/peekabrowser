@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Peekabrowser</title>
+    <link rel="stylesheet" href="/src/empty.css" />
+    <script>document.addEventListener('contextmenu', e => e.preventDefault());</script>
+    <script type="module" src="/src/empty.ts" defer></script>
+  </head>
+  <body>
+    <main id="empty" role="status">
+      <p id="empty-title" data-i18n="empty.title">沒有分頁</p>
+      <button id="new-tab" type="button" data-i18n-title="chrome.newTab">
+        <span data-icon="sf-plus"></span><span data-i18n="empty.newTab">新分頁</span>
+      </button>
+    </main>
+  </body>
+</html>

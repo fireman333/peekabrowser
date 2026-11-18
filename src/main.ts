@@ -35,6 +35,8 @@ interface PageInfo {
 let destinations: Destination[] = [];
 let pages: PageInfo[] = [];
 let activePageId: string | null = null;
+/** Selected destination (may have no tabs: the empty state). */
+let activeDestId: string | null = null;
 let pinned = false;
 
 const tabList = document.getElementById("tab-list")!;
@@ -81,10 +83,6 @@ function isSystemDest(dest: Destination): boolean {
   return dest.url.includes("system://");
 }
 
-function activePage(): PageInfo | undefined {
-  return pages.find((p) => p.id === activePageId);
-}
-
 function renderRail() {
   tabList.innerHTML = "";
   const sorted = [...destinations].sort((a, b) => a.order - b.order);
@@ -124,7 +122,7 @@ function railItem(dest: Destination): HTMLElement {
   btn.setAttribute("role", "listitem");
   btn.dataset.id = dest.id;
   const destPages = pages.filter((p) => p.dest_id === dest.id);
-  const selected = destPages.some((p) => p.id === activePageId);
+  const selected = dest.id === activeDestId;
   const generating = destPages.some((p) => p.generating);
   const unseen = !generating && destPages.some((p) => p.unseen);
   btn.classList.toggle("selected", selected);
@@ -155,8 +153,8 @@ function railItem(dest: Destination): HTMLElement {
       invoke("open_system_app", { appName: "Reminders" });
       return;
     }
-    // Shows the destination's most recent tab (or its first one); clicking
-    // the selected destination never opens another tab.
+    // Shows the destination's most recent tab, or its empty state when it
+    // has none; never opens a tab.
     invoke("switch_destination", { id: dest.id }).catch(() => {});
   });
   return btn;
@@ -199,7 +197,7 @@ function setupEventListeners() {
 
   installTabShortcuts({
     activePageId: () => activePageId,
-    activeDestId: () => activePage()?.dest_id ?? null,
+    activeDestId: () => activeDestId,
   });
 }
 
@@ -225,6 +223,10 @@ function setupTauriListeners() {
 
   listen<string>("active-page-changed", (event) => {
     activePageId = event.payload || null;
+  }).catch(() => {});
+
+  listen<string>("active-dest-changed", (event) => {
+    activeDestId = event.payload || null;
     renderRail();
   }).catch(() => {});
 
