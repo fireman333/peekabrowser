@@ -1,37 +1,110 @@
 //! Read the text the user is pointing at in another app (three-finger lookup).
 //!
 //! Tiers, tried in order:
-//! 1. `AXSelectedText` of the focused element in the frontmost app (an
-//!    existing selection wins).
+//! 1. `AXSelectedText` of the focused element in the frontmost app, but only
+//!    when the tap lands on that selection (`AXBoundsForRange` of
+//!    `AXSelectedTextRange`, with a small tolerance) and the element under the
+//!    cursor belongs to the frontmost app. Like the system Look Up gesture.
 //! 2. The word under the cursor: `AXUIElementCopyElementAtPosition` →
 //!    `AXRangeForPosition` → `AXStringForRange` on a small window around that
 //!    index → word boundaries from `CFStringTokenizer` (handles CJK too).
+//!    If that finds nothing, an existing selection in the same (frontmost)
+//!    app is used after all (tap on whitespace next to a selection).
 //! 3. Last resort: a synthetic ⌘C (CGEvent) with the pasteboard saved before
-//!    and restored afterwards. ⌘C ⌘C detection is told to ignore it.
+//!    and restored afterwards. ⌘C ⌘C detection is told to ignore it. Gated:
+//!    the cursor must be over the frontmost app, and AX must report a
+//!    non-empty `AXSelectedTextRange`. When the selection range cannot be read
+//!    at all, the copy is still tried for apps known to expose little or no
+//!    AX text (Electron / Chromium-based bundles), because there it is the
+//!    only way to get text. Many apps copy something even with no selection
+//!    (VS Code copies the whole line, Finder the file name), so text from this
+//!    tier is never auto-sent: [`Tier::must_choose`] makes the caller open
+//!    the picker.
 //!
 //! Never synthesizes clicks. Needs Accessibility. All calls here are safe off
-//! the main thread (AX and NSPasteboard are thread-safe; nothing touches UI).
+//! the main thread (AX and NSPasteboard are thread-safe; nothing touches UI),
+//! except [`copy_keycode`], which reads the keyboard layout (main thread).
 
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
+/// Which tier produced the captured text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// An existing selection (tap on it, or fallback when no word was found).
+    Selection,
+    /// The word under the cursor.
+    WordAtCursor,
+    /// Synthetic ⌘C: what the app chose to copy, possibly not what was pointed at.
+    SyntheticCopy,
+}
+
+impl Tier {
+    pub fn label(self) -> &'static str {
+        match self {
+            Tier::Selection => "AXSelectedText",
+            Tier::WordAtCursor => "AXRangeForPosition",
+            Tier::SyntheticCopy => "synthetic ⌘C",
+        }
+    }
+
+    /// Text from this tier must go through the picker, never auto-send.
+    pub fn must_choose(self) -> bool {
+        matches!(self, Tier::SyntheticCopy)
+    }
+}
+
 /// Text found at the cursor.
 pub struct Capture {
     pub text: String,
-    /// Which tier produced it (for logs).
-    pub tier: &'static str,
+    /// Which tier produced it (logs and routing: see [`Tier::must_choose`]).
+    pub tier: Tier,
     /// Name of the app that owns the text, if known.
     pub source_app: Option<String>,
 }
 
 /// Longest text taken from a selection (the picker/destinations cap anyway).
 const MAX_CHARS: usize = 20_000;
-/// Per-call AX timeout so a hung app cannot stall the worker thread.
+/// Per-element AX timeout so a hung app cannot stall the worker thread.
 const AX_TIMEOUT_SECS: f32 = 0.3;
+/// How far (points) outside the selection bounds a tap still counts as on it.
+const SELECTION_TOLERANCE: f64 = 4.0;
+/// Fallback virtual keycode of "c" (ANSI QWERTY).
+pub const DEFAULT_KEYCODE_C: u16 = 8;
+
+/// Axis-aligned rectangle in global top-left-origin points.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// Whether (`px`, `py`) lies inside `r` grown by `tol` on every side.
+/// Empty rects (a caret, or bounds the app could not compute) never match.
+pub fn point_near_rect(r: Rect, px: f64, py: f64, tol: f64) -> bool {
+    if !(r.w > 0.0 && r.h > 0.0) || !r.x.is_finite() || !r.y.is_finite() {
+        return false;
+    }
+    px >= r.x - tol && px <= r.x + r.w + tol && py >= r.y - tol && py <= r.y + r.h + tol
+}
+
+/// Whether a bundle's `Contents/Frameworks` entries mark it as an Electron or
+/// Chromium-based app (little or no AX text unless a screen reader is on).
+pub fn is_ax_poor_bundle<S: AsRef<str>>(framework_names: &[S]) -> bool {
+    framework_names.iter().any(|n| {
+        let n = n.as_ref();
+        n == "Electron Framework.framework"
+            || n == "Chromium Embedded Framework.framework"
+            || (n.ends_with(" Framework.framework") && (n.contains("Chrome") || n.contains("Chromium")))
+    })
+}
 
 /// `x`, `y`: cursor in global top-left-origin points (same space as AX).
+/// `copy_keycode` is only called when tier 3 runs (see [`copy_keycode`]).
 #[cfg(target_os = "macos")]
-pub fn capture_text_at(x: f64, y: f64) -> Option<Capture> {
+pub fn capture_text_at(x: f64, y: f64, copy_keycode: impl FnOnce() -> u16) -> Option<Capture> {
     let own_pid = std::process::id() as i32;
     let hit = ax::element_at(x, y);
     let hit_pid = hit.as_ref().and_then(ax::pid_of);
@@ -40,32 +113,154 @@ pub fn capture_text_at(x: f64, y: f64) -> Option<Capture> {
         return None;
     }
     let front = frontmost_pid().filter(|p| *p != own_pid);
+    // The cursor is over the app that owns the focus (and so any selection).
+    let on_front = front.filter(|f| hit_pid == Some(*f));
+    let sel = on_front.and_then(ax::selection);
 
-    // 1. Existing selection in the frontmost app.
-    if let Some(pid) = front {
-        if let Some(text) = ax::selected_text(pid) {
-            return Some(Capture { text, tier: "AXSelectedText", source_app: app_name(pid) });
+    // 1. Existing selection, only when the tap is on it.
+    if let (Some(pid), Some(s)) = (on_front, sel.as_ref()) {
+        if let (Some(text), Some(b)) = (s.text.as_ref(), s.bounds) {
+            if point_near_rect(b, x, y, SELECTION_TOLERANCE) {
+                return Some(Capture { text: text.clone(), tier: Tier::Selection, source_app: app_name(pid) });
+            }
         }
     }
     // 2. Word under the cursor.
     if let Some(el) = hit.as_ref() {
         if let Some(text) = ax::word_at_position(el, x, y) {
             let source_app = hit_pid.and_then(app_name);
-            return Some(Capture { text, tier: "AXRangeForPosition", source_app });
+            return Some(Capture { text, tier: Tier::WordAtCursor, source_app });
         }
     }
-    // 3. Synthetic ⌘C (only copies an existing selection the AX tiers could not read).
-    if let Some(pid) = front {
-        if let Some(text) = pasteboard::copy_selection_via_cmd_c() {
-            return Some(Capture { text, tier: "synthetic ⌘C", source_app: app_name(pid) });
-        }
+    // 1b. No word there: fall back to the selection in the same app.
+    if let (Some(pid), Some(text)) = (on_front, sel.as_ref().and_then(|s| s.text.clone())) {
+        return Some(Capture { text, tier: Tier::Selection, source_app: app_name(pid) });
     }
-    None
+    // 3. Synthetic ⌘C, gated (see the module docs).
+    let pid = on_front?;
+    let allowed = match sel.as_ref().and_then(|s| s.length) {
+        Some(len) => len > 0,
+        None => is_ax_poor_app(pid),
+    };
+    if !allowed {
+        log::info!("lookup: no AX-confirmed selection in the frontmost app; synthetic copy skipped");
+        return None;
+    }
+    let text = pasteboard::copy_selection_via_cmd_c(copy_keycode())?;
+    Some(Capture { text, tier: Tier::SyntheticCopy, source_app: app_name(pid) })
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn capture_text_at(_x: f64, _y: f64) -> Option<Capture> {
+pub fn capture_text_at(_x: f64, _y: f64, _copy_keycode: impl FnOnce() -> u16) -> Option<Capture> {
     None
+}
+
+/// Electron / Chromium bundle check for app `pid` (reads its Frameworks folder).
+#[cfg(target_os = "macos")]
+fn is_ax_poor_app(pid: i32) -> bool {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::NSString;
+    let bundle: Option<String> = objc2::rc::autoreleasepool(|_| unsafe {
+        let cls = AnyClass::get(c"NSRunningApplication")?;
+        let app: *mut AnyObject = msg_send![cls, runningApplicationWithProcessIdentifier: pid];
+        if app.is_null() {
+            return None;
+        }
+        let url: *mut AnyObject = msg_send![app, bundleURL];
+        if url.is_null() {
+            return None;
+        }
+        let path: *mut AnyObject = msg_send![url, path];
+        (!path.is_null()).then(|| (*(path as *const NSString)).to_string())
+    });
+    let Some(bundle) = bundle else { return false };
+    let names: Vec<String> = std::fs::read_dir(std::path::Path::new(&bundle).join("Contents/Frameworks"))
+        .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    is_ax_poor_bundle(&names)
+}
+
+/// First virtual keycode in 0..128 that `translate` maps to "c"
+/// ([`DEFAULT_KEYCODE_C`] if none).
+pub fn find_keycode_for_c(translate: impl Fn(u16) -> Option<char>) -> u16 {
+    (0u16..128).find(|k| translate(*k) == Some('c')).unwrap_or(DEFAULT_KEYCODE_C)
+}
+
+/// Virtual keycode that types "c" with ⌘ held in the current keyboard layout
+/// (Dvorak, AZERTY, "Dvorak – QWERTY ⌘" …). Falls back to 8 (ANSI "C").
+/// Text Input Sources must be read on the main thread.
+#[cfg(target_os = "macos")]
+pub fn copy_keycode() -> u16 {
+    use core_foundation::string::CFStringRef;
+    #[link(name = "Carbon", kind = "framework")]
+    extern "C" {
+        static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
+        fn TISCopyCurrentKeyboardLayoutInputSource() -> *const c_void;
+        fn TISGetInputSourceProperty(src: *const c_void, key: CFStringRef) -> *const c_void;
+        fn LMGetKbdType() -> u8;
+        fn UCKeyTranslate(
+            layout: *const c_void,
+            keycode: u16,
+            action: u16,
+            modifiers: u32,
+            kbd_type: u32,
+            options: u32,
+            dead_key_state: *mut u32,
+            max_len: usize,
+            actual_len: *mut usize,
+            chars: *mut u16,
+        ) -> i32;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFDataGetBytePtr(data: *const c_void) -> *const u8;
+        fn CFRelease(cf: *const c_void);
+    }
+    const ACTION_DOWN: u16 = 0; // kUCKeyActionDown
+    const CMD_MODIFIER: u32 = (0x100 >> 8) & 0xFF; // (cmdKey >> 8) & 0xFF
+    const NO_DEAD_KEYS: u32 = 1; // kUCKeyTranslateNoDeadKeysMask
+    unsafe {
+        let src = TISCopyCurrentKeyboardLayoutInputSource();
+        if src.is_null() {
+            return DEFAULT_KEYCODE_C;
+        }
+        let data = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData);
+        let layout = if data.is_null() { std::ptr::null() } else { CFDataGetBytePtr(data) as *const c_void };
+        let code = if layout.is_null() {
+            DEFAULT_KEYCODE_C
+        } else {
+            let kbd = LMGetKbdType() as u32;
+            let translate = |mods: u32| {
+                move |k: u16| {
+                    let mut dead = 0u32;
+                    let mut len = 0usize;
+                    let mut buf = [0u16; 4];
+                    let err = UCKeyTranslate(
+                        layout, k, ACTION_DOWN, mods, kbd, NO_DEAD_KEYS, &mut dead, buf.len(), &mut len, buf.as_mut_ptr(),
+                    );
+                    if err != 0 || len != 1 {
+                        return None;
+                    }
+                    char::from_u32(buf[0] as u32).map(|c| c.to_ascii_lowercase())
+                }
+            };
+            // With ⌘ first ("Dvorak – QWERTY ⌘" switches to QWERTY under ⌘).
+            let with_cmd = find_keycode_for_c(translate(CMD_MODIFIER));
+            if with_cmd != DEFAULT_KEYCODE_C || translate(CMD_MODIFIER)(DEFAULT_KEYCODE_C) == Some('c') {
+                with_cmd
+            } else {
+                find_keycode_for_c(translate(0))
+            }
+        };
+        CFRelease(src);
+        code
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn copy_keycode() -> u16 {
+    DEFAULT_KEYCODE_C
 }
 
 /// Trim and cap captured text; `None` if nothing is left.
@@ -171,7 +366,7 @@ pub fn word_at_utf16(s: &str, idx: usize) -> Option<String> {
 #[cfg(target_os = "macos")]
 mod ax {
     //! Minimal raw Accessibility FFI (ApplicationServices / HIServices).
-    use super::{clean, word_at_utf16, AX_TIMEOUT_SECS};
+    use super::{clean, word_at_utf16, Rect, AX_TIMEOUT_SECS};
     use core_foundation::base::{CFRange, CFType, CFTypeRef, TCFType};
     use core_foundation::number::CFNumber;
     use core_foundation::string::{CFString, CFStringRef};
@@ -180,15 +375,23 @@ mod ax {
     type AXUIElementRef = *const c_void;
     const AX_OK: i32 = 0;
     const AX_VALUE_CGPOINT: u32 = 1;
+    const AX_VALUE_CGRECT: u32 = 3;
     const AX_VALUE_CFRANGE: u32 = 4;
     /// Characters fetched on each side of the hit index.
     const WINDOW: isize = 64;
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     struct CGPoint {
         x: f64,
         y: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct CGRect {
+        origin: CGPoint,
+        size: CGPoint,
     }
 
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -217,12 +420,18 @@ mod ax {
         fn raw(&self) -> AXUIElementRef {
             self.0.as_CFTypeRef()
         }
-        /// Takes ownership of a +1 reference.
+        /// Takes ownership of a +1 reference and gives the element its own
+        /// messaging timeout (never set on the system-wide element: that one
+        /// is the default for every AX call in the process).
         unsafe fn own(r: AXUIElementRef) -> Option<Self> {
             (!r.is_null()).then(|| {
                 AXUIElementSetMessagingTimeout(r, AX_TIMEOUT_SECS);
                 Element(CFType::wrap_under_create_rule(r))
             })
+        }
+        /// Takes ownership of a +1 reference without touching its timeout.
+        unsafe fn own_plain(r: AXUIElementRef) -> Option<Self> {
+            (!r.is_null()).then(|| Element(CFType::wrap_under_create_rule(r)))
         }
     }
 
@@ -244,7 +453,9 @@ mod ax {
 
     fn element_attr(el: &Element, name: &str) -> Option<Element> {
         let v = attr(el, name)?;
-        // The value is an AXUIElement; retain it under our own wrapper.
+        // The value is an AXUIElement; keep it under our own wrapper with its
+        // own timeout (elements do not inherit the parent's).
+        unsafe { AXUIElementSetMessagingTimeout(v.as_CFTypeRef(), AX_TIMEOUT_SECS) };
         Some(Element(v))
     }
 
@@ -267,7 +478,7 @@ mod ax {
 
     pub fn element_at(x: f64, y: f64) -> Option<Element> {
         unsafe {
-            let sys = Element::own(AXUIElementCreateSystemWide())?;
+            let sys = Element::own_plain(AXUIElementCreateSystemWide())?;
             let mut hit: AXUIElementRef = std::ptr::null();
             let err = AXUIElementCopyElementAtPosition(sys.raw(), x as f32, y as f32, &mut hit);
             if err != AX_OK {
@@ -282,11 +493,37 @@ mod ax {
         (unsafe { AXUIElementGetPid(el.raw(), &mut pid) } == AX_OK).then_some(pid)
     }
 
-    /// Tier 1: the focused element's selected text in app `pid`.
-    pub fn selected_text(pid: i32) -> Option<String> {
+    /// The focused element's selection in app `pid`, as far as AX exposes it.
+    pub struct Selection {
+        /// Selected text (cleaned), if readable and non-blank.
+        pub text: Option<String>,
+        /// Length of `AXSelectedTextRange`, if readable.
+        pub length: Option<isize>,
+        /// On-screen bounds of the selected range, if the app reports them.
+        pub bounds: Option<Rect>,
+    }
+
+    /// `None` if the app has no readable focused element.
+    pub fn selection(pid: i32) -> Option<Selection> {
         let app = unsafe { Element::own(AXUIElementCreateApplication(pid))? };
         let focused = element_attr(&app, "AXFocusedUIElement")?;
-        clean(&string_of(&attr(&focused, "AXSelectedText")?)?)
+        let text = attr(&focused, "AXSelectedText").and_then(|v| string_of(&v)).and_then(|s| clean(&s));
+        let range = attr(&focused, "AXSelectedTextRange").and_then(|v| range_of(&v));
+        let bounds = range
+            .filter(|r| r.length > 0)
+            .and_then(|r| param_attr(&focused, "AXBoundsForRange", &range_value(r)))
+            .and_then(|v| rect_of(&v));
+        Some(Selection { text, length: range.map(|r| r.length), bounds })
+    }
+
+    fn rect_of(v: &CFType) -> Option<Rect> {
+        if v.type_of() as usize != unsafe { AXValueGetTypeID() } {
+            return None;
+        }
+        let mut r = CGRect::default();
+        unsafe { AXValueGetValue(v.as_CFTypeRef(), AX_VALUE_CGRECT, &mut r as *mut CGRect as *mut c_void) }.then_some(
+            Rect { x: r.origin.x, y: r.origin.y, w: r.size.x, h: r.size.y },
+        )
     }
 
     /// Tier 2: the word under (x, y) in `hit` or one of its first ancestors
@@ -338,11 +575,28 @@ mod pasteboard {
     use objc2::runtime::{AnyClass, AnyObject};
     use objc2_foundation::NSString;
 
-    const KEYCODE_C: u16 = 8;
     /// How long to wait for the target app to write the pasteboard.
     const COPY_WAIT: Duration = Duration::from_millis(350);
+    /// After giving up, keep watching this long (from the key press) for a
+    /// late write, and put the user's pasteboard back if one comes.
+    const LATE_WAIT: Duration = Duration::from_millis(1000);
     /// ⌘C ⌘C ignores key presses and pasteboard changes for this long.
     const IGNORE: Duration = Duration::from_millis(1200);
+    /// nspasteboard.org marker: clipboard managers skip transient writes.
+    const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
+
+    /// Owned (+1) NSPasteboardItem copies. NSPasteboardItem is a plain data
+    /// container, safe to hand to another thread once nothing else uses it.
+    struct Saved(Vec<*mut AnyObject>);
+    unsafe impl Send for Saved {}
+
+    impl Saved {
+        unsafe fn release(self) {
+            for item in self.0 {
+                let _: () = msg_send![item, release];
+            }
+        }
+    }
 
     unsafe fn general() -> Option<*mut AnyObject> {
         let pb: *mut AnyObject = msg_send![AnyClass::get(c"NSPasteboard")?, generalPasteboard];
@@ -354,12 +608,12 @@ mod pasteboard {
     }
 
     /// Copies of every pasteboard item (all types), as owned (+1) NSPasteboardItems.
-    unsafe fn snapshot(pb: *mut AnyObject) -> Vec<*mut AnyObject> {
+    unsafe fn snapshot(pb: *mut AnyObject) -> Saved {
         let mut out = Vec::new();
-        let Some(item_cls) = AnyClass::get(c"NSPasteboardItem") else { return out };
+        let Some(item_cls) = AnyClass::get(c"NSPasteboardItem") else { return Saved(out) };
         let items: *mut AnyObject = msg_send![pb, pasteboardItems];
         if items.is_null() {
-            return out;
+            return Saved(out);
         }
         let n: usize = msg_send![items, count];
         for i in 0..n {
@@ -380,20 +634,35 @@ mod pasteboard {
             }
             out.push(copy);
         }
-        out
+        Saved(out)
     }
 
-    unsafe fn restore(pb: *mut AnyObject, saved: Vec<*mut AnyObject>) {
+    /// Put the saved items back, marked transient so clipboard managers do
+    /// not record the restore as a new copy.
+    unsafe fn restore(pb: *mut AnyObject, saved: Saved) {
         let _: isize = msg_send![pb, clearContents];
-        if !saved.is_empty() {
-            if let Some(arr_cls) = AnyClass::get(c"NSArray") {
-                let arr: *mut AnyObject = msg_send![arr_cls, arrayWithObjects: saved.as_ptr(), count: saved.len()];
-                let _: bool = msg_send![pb, writeObjects: arr];
+        if !saved.0.is_empty() {
+            if let Some(data_cls) = AnyClass::get(c"NSData") {
+                let empty: *mut AnyObject = msg_send![data_cls, data];
+                let ty = NSString::from_str(TRANSIENT_TYPE);
+                if let Some(first) = saved.0.first() {
+                    let _: bool = msg_send![*first, setData: empty, forType: &*ty];
+                }
+            }
+            let ok = match AnyClass::get(c"NSArray") {
+                Some(arr_cls) => {
+                    let arr: *mut AnyObject =
+                        msg_send![arr_cls, arrayWithObjects: saved.0.as_ptr(), count: saved.0.len()];
+                    let ok: bool = msg_send![pb, writeObjects: arr];
+                    ok
+                }
+                None => false,
+            };
+            if !ok {
+                log::warn!("lookup: could not restore the pasteboard ({} items); it is now empty", saved.0.len());
             }
         }
-        for item in saved {
-            let _: () = msg_send![item, release];
-        }
+        saved.release();
     }
 
     unsafe fn string(pb: *mut AnyObject) -> Option<String> {
@@ -402,13 +671,13 @@ mod pasteboard {
         (!s.is_null()).then(|| (*(s as *const NSString)).to_string())
     }
 
-    fn post_cmd_c() -> bool {
+    fn post_cmd_c(keycode: u16) -> bool {
         use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
         use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
         let Ok(src) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else { return false };
         let (Ok(down), Ok(up)) = (
-            CGEvent::new_keyboard_event(src.clone(), KEYCODE_C, true),
-            CGEvent::new_keyboard_event(src, KEYCODE_C, false),
+            CGEvent::new_keyboard_event(src.clone(), keycode, true),
+            CGEvent::new_keyboard_event(src, keycode, false),
         ) else {
             return false;
         };
@@ -419,21 +688,20 @@ mod pasteboard {
         true
     }
 
-    pub fn copy_selection_via_cmd_c() -> Option<String> {
+    /// `keycode`: virtual key that types "c" in the current layout.
+    pub fn copy_selection_via_cmd_c(keycode: u16) -> Option<String> {
         objc2::rc::autoreleasepool(|_| unsafe {
             let pb = general()?;
             crate::hotkeys::double_cmd_c::ignore_synthetic_copy(IGNORE);
             let saved = snapshot(pb);
             let before = change_count(pb);
-            if !post_cmd_c() {
-                for item in saved {
-                    let _: () = msg_send![item, release];
-                }
+            if !post_cmd_c(keycode) {
+                saved.release();
                 return None;
             }
-            let deadline = Instant::now() + COPY_WAIT;
+            let pressed = Instant::now();
             let mut changed = false;
-            while Instant::now() < deadline {
+            while pressed.elapsed() < COPY_WAIT {
                 std::thread::sleep(Duration::from_millis(20));
                 if change_count(pb) != before {
                     changed = true;
@@ -443,15 +711,36 @@ mod pasteboard {
                 }
             }
             if !changed {
-                for item in saved {
-                    let _: () = msg_send![item, release];
-                }
-                return None; // nothing selected: the app did not copy
+                // Nothing yet: probably no selection. A slow app may still
+                // write; watch a little longer in the background and put the
+                // user's pasteboard back if it does.
+                std::thread::spawn(move || late_restore(saved, before, pressed));
+                return None;
             }
             let text = string(pb);
             crate::hotkeys::double_cmd_c::ignore_synthetic_copy(IGNORE);
             restore(pb, saved);
             text.as_deref().and_then(clean)
+        })
+    }
+
+    fn late_restore(saved: Saved, before: isize, pressed: Instant) {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let Some(pb) = general() else {
+                saved.release();
+                return;
+            };
+            while pressed.elapsed() < LATE_WAIT {
+                std::thread::sleep(Duration::from_millis(25));
+                if change_count(pb) != before {
+                    std::thread::sleep(Duration::from_millis(30));
+                    log::info!("lookup: late synthetic copy after {:?}; pasteboard restored", pressed.elapsed());
+                    crate::hotkeys::double_cmd_c::ignore_synthetic_copy(IGNORE);
+                    restore(pb, saved);
+                    return;
+                }
+            }
+            saved.release();
         })
     }
 }
@@ -487,6 +776,57 @@ mod tests {
         let w = word_at_utf16(s, 4).expect("a word");
         assert!(!w.is_empty() && w.chars().count() < s.chars().count(), "got {w}");
         assert!(s.contains(&w));
+    }
+
+    #[test]
+    fn point_near_rect_uses_tolerance() {
+        let r = Rect { x: 100.0, y: 50.0, w: 200.0, h: 20.0 };
+        assert!(point_near_rect(r, 150.0, 60.0, 4.0));
+        assert!(point_near_rect(r, 97.0, 48.0, 4.0)); // just outside, within tolerance
+        assert!(point_near_rect(r, 304.0, 74.0, 4.0));
+        assert!(!point_near_rect(r, 305.0, 60.0, 4.0));
+        assert!(!point_near_rect(r, 150.0, 80.0, 4.0));
+        assert!(!point_near_rect(r, 150.0, 60.0 - 15.0, 4.0));
+    }
+
+    #[test]
+    fn point_near_rect_rejects_empty_rects() {
+        let caret = Rect { x: 100.0, y: 50.0, w: 0.0, h: 18.0 };
+        assert!(!point_near_rect(caret, 100.0, 55.0, 4.0));
+        let nan = Rect { x: f64::NAN, y: 0.0, w: 10.0, h: 10.0 };
+        assert!(!point_near_rect(nan, 1.0, 1.0, 4.0));
+    }
+
+    #[test]
+    fn ax_poor_bundles() {
+        assert!(is_ax_poor_bundle(&["Electron Framework.framework", "Squirrel.framework"]));
+        assert!(is_ax_poor_bundle(&["Google Chrome Framework.framework"]));
+        assert!(is_ax_poor_bundle(&["Chromium Embedded Framework.framework"]));
+        assert!(!is_ax_poor_bundle(&["Sparkle.framework", "Mantle.framework"]));
+        assert!(!is_ax_poor_bundle::<&str>(&[]));
+    }
+
+    #[test]
+    fn keycode_for_c_follows_layout() {
+        // QWERTY: keycode 8 is "c".
+        let qwerty = |k: u16| (k == 8).then_some('c');
+        assert_eq!(find_keycode_for_c(qwerty), 8);
+        // Dvorak: "c" sits on the QWERTY "i" key (keycode 34).
+        let dvorak = |k: u16| match k {
+            34 => Some('c'),
+            8 => Some('j'),
+            _ => None,
+        };
+        assert_eq!(find_keycode_for_c(dvorak), 34);
+        // No "c" anywhere (e.g. a non-Latin layout): fall back to 8.
+        assert_eq!(find_keycode_for_c(|_| None), DEFAULT_KEYCODE_C);
+    }
+
+    #[test]
+    fn only_synthetic_copy_forces_the_picker() {
+        assert!(Tier::SyntheticCopy.must_choose());
+        assert!(!Tier::Selection.must_choose());
+        assert!(!Tier::WordAtCursor.must_choose());
     }
 
     #[test]

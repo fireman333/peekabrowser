@@ -395,11 +395,12 @@ fn on_tap(app: &AppHandle) {
         return;
     }
     let (x, y) = crate::panel::get_cursor_topleft_pos();
-    let Some(cap) = crate::selection::capture_text_at(x, y) else {
+    let Some(cap) = crate::selection::capture_text_at(x, y, || copy_keycode_on_main(app)) else {
         log::info!("three-finger: tap at ({:.0}, {:.0}) found no text", x, y);
         return;
     };
-    log::info!("three-finger: captured {} chars via {}", cap.text.chars().count(), cap.tier);
+    log::info!("three-finger: captured {} chars via {}", cap.text.chars().count(), cap.tier.label());
+    let must_choose = cap.tier.must_choose();
     let source_app = cap.source_app.or_else(crate::native::frontmost_app_name);
     if let Some(state) = app.try_state::<crate::delivery::PickerState>() {
         if let Ok(mut s) = state.0.lock() {
@@ -407,7 +408,22 @@ fn on_tap(app: &AppHandle) {
             s.source_app = source_app;
         }
     }
-    crate::commands::route_text_from_other_apps(app);
+    // Synthetic ⌘C may have copied something other than what was pointed
+    // at (whole line, file name): always let the user choose.
+    crate::commands::route_text_from_other_apps_with(app, must_choose);
+}
+
+/// Keycode of "c" in the current keyboard layout, read on the main thread
+/// (Text Input Sources are main-thread only). Falls back to ANSI "C".
+fn copy_keycode_on_main(app: &AppHandle) -> u16 {
+    let (tx, rx) = channel();
+    let queued = app.run_on_main_thread(move || {
+        let _ = tx.send(crate::selection::copy_keycode());
+    });
+    if queued.is_err() {
+        return crate::selection::DEFAULT_KEYCODE_C;
+    }
+    rx.recv_timeout(Duration::from_millis(300)).unwrap_or(crate::selection::DEFAULT_KEYCODE_C)
 }
 
 /// Multitouch devices go quiet after sleep; restart them on wake.

@@ -660,6 +660,12 @@ pub fn pick_destination_by_index(app: &AppHandle, index: usize) -> Result<(), St
 /// the "Text from other apps" setting: last used / fixed / let me choose.
 /// Shared by ⌘C ⌘C and the three-finger lookup tap. Safe to call off the main thread.
 pub fn route_text_from_other_apps(app: &AppHandle) {
+    route_text_from_other_apps_with(app, false);
+}
+
+/// Like [`route_text_from_other_apps`]; `force_choose` always opens the picker
+/// (used when the text may not be what the user pointed at).
+pub fn route_text_from_other_apps_with(app: &AppHandle, force_choose: bool) {
     let settings = app
         .try_state::<crate::app_settings::AppSettingsStore>()
         .map(|s| s.get())
@@ -667,6 +673,7 @@ pub fn route_text_from_other_apps(app: &AppHandle) {
     let dests = app.state::<DestinationManager>().get_all();
     let exists = |id: &Option<String>| id.as_ref().filter(|i| dests.iter().any(|d| &d.id == *i)).cloned();
     let target = match settings.text_from_other_apps.as_str() {
+        _ if force_choose => None,
         "fixed" => exists(&settings.fixed_destination_id).or_else(|| dests.first().map(|d| d.id.clone())),
         "last_used" => exists(&settings.last_used_destination_id),
         _ => None,
