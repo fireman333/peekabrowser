@@ -132,6 +132,23 @@ pub fn run() {
             // three-finger lookup (opt-in; starts only if three_finger_lookup is on)
             hotkeys::three_finger::sync(&handle);
 
+            // Debug builds only: PB_DEBUG_SHOW=1 shows the panel with the first
+            // destination at launch (for screenshots / UI checks).
+            #[cfg(debug_assertions)]
+            if std::env::var_os("PB_DEBUG_SHOW").is_some() {
+                let h = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    let h2 = h.clone();
+                    let _ = h.run_on_main_thread(move || {
+                        panel::show_panel(&h2);
+                        if let Some(d) = h2.state::<destinations::DestinationManager>().get_all().into_iter().next() {
+                            let _ = lifecycle::switch_destination(&h2, &d);
+                        }
+                    });
+                });
+            }
+
             // Builds before v2.0.5 were ad-hoc signed, so their Accessibility / Screen
             // Recording entries no longer match. Once, clear them and ask again.
             {
