@@ -12,17 +12,15 @@
 ## 下一步
 1. Remaining manual checks (O3): three-finger on selected text / Chrome; 注音 Enter in address bar; pin + picker + S/M/L.
 2. Check in-app updater actually upgrades v2.0.x → v2.1.1 (not tested).
-3. iOS session: add macOS download link to iPad product page (O5).
+3. iOS session: add macOS download link to iPad product page (O5) — owned by that session; nothing to do here.
 
 ## 未結案事項
 - [O3] Manual checks still pending: three-finger on selected text / Chrome; 注音 Enter in address bar; pin + picker + S/M/L widths
-- [O5] iOS session (Resume spec 效能優化) queued: add macOS download link (releases/latest) to iPad product page
+- [O5] iOS session (Resume spec 效能優化) acknowledged v2.1.1 + releases/latest link (2026-11-18); product-page macOS link queued after its perf + close-last-tab changes land; page deploy waits for owner approval
 - [O6] In-app updater path v2.0.x → v2.1.x never tested end to end
 
 ## 本次結案
-- [O1] Highlight animation redesign — replaced by picker-styled "sent" chip on direct send; box/dot removed (user approved)
-- [O2] ⌘W makes top chrome bar disappear — fixed with CHROME_HOLD during close + visibility re-check; user confirmed OK
-- [O4] Open PR — PR #9 opened, CI green on macos-15, merged; released as v2.1.0/v2.1.1
+- (none this update; previous closures in log.md)
 
 ## 指標
 - Release recipe: `CARGO_PROFILE_RELEASE_STRIP=false SQLITE3_LIB_DIR=$(xcrun --show-sdk-path)/usr/lib ./scripts/notarize-release.sh <ver>` → `gh release create v<ver> release/v<ver>/* --notes-file docs/releases/v<ver>.md` (notes bilingual; bump package.json, tauri.conf.json, Cargo.toml)
