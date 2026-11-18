@@ -122,6 +122,58 @@ html, body {
 .picker-btn:active { background: var(--tide-soft); filter: brightness(0.96); }
 .picker-btn:focus { outline: none; }
 .picker-btn:focus-visible { outline: 2px solid var(--tide); outline-offset: -2px; }
+/* Keyboard selection (↑↓): same look as a focused row. */
+.picker-btn.kb-selected,
+.picker-prompt.kb-selected { background: var(--tide-soft); outline: 2px solid var(--tide); outline-offset: -2px; }
+
+/* Rows that have prompts: a small chevron that turns down while expanded. */
+.picker-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 10px;
+  height: 16px;
+  /* Sit close to the keycap: the row gap is wide for a 248pt window. */
+  margin-right: calc(4px - var(--s3));
+  color: var(--ink3);
+  transition: transform var(--t-quick) var(--ease-smooth);
+}
+
+.picker-btn[aria-expanded="true"] .picker-badge { transform: rotate(90deg); color: var(--tide); }
+
+/* A destination's prompts, inline under it as indented capsules (iOS). */
+.picker-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 4px 24px;
+  flex-shrink: 0;
+}
+
+.picker-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  width: 100%;
+  padding: 0 14px;
+  border: 1px solid var(--line-hair);
+  border-radius: 999px;
+  background: var(--fill-hover);
+  color: var(--ink1);
+  font: inherit;
+  font-size: var(--fs-callout);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-quick) var(--ease-smooth);
+}
+
+.picker-prompt:hover,
+.picker-prompt:focus-visible { background: var(--tide-soft); }
+.picker-prompt:focus { outline: none; }
+.picker-prompt-icon { display: inline-flex; color: var(--tide); flex-shrink: 0; }
+.picker-prompt-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .picker-icon {
   width: 28px;

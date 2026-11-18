@@ -27,6 +27,7 @@ const PATHS: Record<string, string> = {
   "sf-plus": '<path d="M12 5v14M5 12h14"/>',
   "sf-safari": '<circle cx="12" cy="12" r="8.5"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
   "sf-xmark": '<path d="M7.5 7.5l9 9M16.5 7.5l-9 9"/>',
+  "sf-text-quote": '<path d="M4.5 6.5v11"/><path d="M8.5 7h11M8.5 12h11M8.5 17h7"/>',
 };
 
 export function icon(name: string, size = 18): string {

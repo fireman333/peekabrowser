@@ -57,6 +57,15 @@
         <p class="footer" data-i18n="s.autoSubmit.foot"></p>
 
         <div class="group">
+          <button type="button" id="open-prompts" class="row row-button">
+            <span class="row-label" data-i18n="p.row"></span>
+            <span class="row-value" id="prompts-profession"></span>
+            <span class="chev" aria-hidden="true">›</span>
+          </button>
+        </div>
+        <p class="footer" data-i18n="p.row.foot"></p>
+
+        <div class="group">
           <label class="row">
             <span class="row-label" data-i18n="s.threeFinger"></span>
             <input type="checkbox" class="switch" id="opt-three-finger" />
@@ -72,7 +81,7 @@
       <section class="section">
         <div class="section-head">
           <h2 data-i18n="s.sec.sites"></h2>
-          <button type="button" id="reorder-btn" class="link" data-i18n="s.reorder"></button>
+          <button type="button" id="reorder-btn" class="link" data-i18n="s.editDests"></button>
         </div>
         <div class="group" id="sites-group">
           <div id="destinations-list"></div>
@@ -212,9 +221,75 @@
           <button id="save-btn" class="btn-primary" data-i18n="common.save"></button>
           <button id="cancel-btn" class="btn-secondary" data-i18n="common.cancel"></button>
         </div>
+        <section class="section" id="site-prompts-section">
+          <div class="section-head">
+            <h2 data-i18n="p.prompts"></h2>
+            <button type="button" class="link prompts-reorder" data-i18n="s.reorder"></button>
+          </div>
+          <div class="group prompt-group">
+            <div class="prompt-list" id="site-prompts"></div>
+            <button type="button" class="row row-button link prompts-add" data-i18n="p.add"></button>
+          </div>
+          <p class="footer" data-i18n="p.dest.foot"></p>
+        </section>
+        <p class="footer hidden" id="site-prompts-later" data-i18n="p.dest.afterSave"></p>
+
         <button type="button" id="delete-btn" class="link danger hidden" data-i18n="s.site.delete"></button>
       </div>
     </div>
+
+    <!-- ─── Prompts for your profession: template list ─── -->
+    <div id="view-templates" class="hidden">
+      <button type="button" class="link back to-main" data-i18n="s.back"></button>
+      <h1 data-i18n="p.row"></h1>
+      <section class="section">
+        <div class="group" id="template-list" role="radiogroup" data-i18n-aria="p.row"></div>
+        <p class="footer" data-i18n="p.list.foot"></p>
+      </section>
+    </div>
+
+    <!-- ─── One template's prompts ─── -->
+    <div id="view-template" class="hidden">
+      <button type="button" class="link back" id="to-templates"></button>
+      <h1 id="template-title"></h1>
+      <section class="section" id="template-prompts-section">
+        <div class="section-head">
+          <h2 data-i18n="p.prompts"></h2>
+          <button type="button" class="link prompts-reorder" data-i18n="s.reorder"></button>
+        </div>
+        <div class="group prompt-group">
+          <div class="prompt-list" id="template-prompts"></div>
+          <button type="button" class="row row-button link prompts-add" data-i18n="p.add"></button>
+        </div>
+        <p class="footer" data-i18n="p.template.foot"></p>
+      </section>
+      <div class="group">
+        <button type="button" id="restore-template" class="row row-button link danger" data-i18n="p.restore"></button>
+      </div>
+    </div>
   </div>
+
+  <!-- ─── Prompt form (name + prompt) ─── -->
+  <dialog id="prompt-dialog" aria-labelledby="prompt-dialog-title">
+    <form method="dialog" id="prompt-form">
+      <h2 id="prompt-dialog-title" data-i18n="p.prompt"></h2>
+      <div class="group fields">
+        <div class="field">
+          <label for="prompt-name" data-i18n="dest.name"></label>
+          <input id="prompt-name" type="text" data-i18n-placeholder="p.namePh" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="prompt-text" data-i18n="p.prompt"></label>
+          <textarea id="prompt-text" rows="4" data-i18n-placeholder="p.promptPh"></textarea>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="prompt-delete" class="link danger" data-i18n="p.delete"></button>
+        <span class="spacer"></span>
+        <button type="button" id="prompt-cancel" class="btn-secondary" data-i18n="common.cancel"></button>
+        <button type="submit" id="prompt-save" class="btn-primary" data-i18n="common.save"></button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

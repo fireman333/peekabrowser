@@ -76,6 +76,13 @@ permissions = [
   "allow-reload-page",
   "allow-show-chrome-menu",
   "allow-show-tab-menu",
+  "allow-get-prompt-templates",
+  "allow-set-prompt-profession",
+  "allow-set-template-prompts",
+  "allow-restore-template-prompts",
+  "allow-get-destination-prompts",
+  "allow-set-destination-prompts",
+  "allow-resize-picker",
 ]
 
 [[set]]

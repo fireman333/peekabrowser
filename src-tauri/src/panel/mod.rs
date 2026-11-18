@@ -1227,7 +1227,10 @@ pub fn show_picker(app: &AppHandle, cursor_x: f64, cursor_y: f64) {
         .max(screen_top + 10.0)
         .min(screen_bottom - PICKER_HEIGHT - 10.0);
 
+    *PICKER_ANCHOR.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y, cursor_screen.clone()));
     if let Some(w) = app.get_webview_window(PICKER_LABEL) {
+        // Back to the base height (a previous showing may have expanded prompts).
+        let _ = w.set_size(tauri::LogicalSize::new(PICKER_WIDTH, PICKER_HEIGHT));
         let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         let _ = w.show();
         let w2 = w.clone();
@@ -1239,6 +1242,28 @@ pub fn show_picker(app: &AppHandle, cursor_x: f64, cursor_y: f64) {
     if let Ok(p) = app.get_webview_panel(PICKER_LABEL) {
         p.show();
     }
+}
+
+/// Where the picker was placed by `show_picker` (x, y, its screen), so a
+/// resize can grow it downward and move it up only as far as the screen needs.
+static PICKER_ANCHOR: std::sync::Mutex<Option<(f64, f64, ScreenRect)>> = std::sync::Mutex::new(None);
+
+/// Picker height for `extra` points of expanded prompt rows, capped to the screen.
+fn picker_height(extra: f64, screen_height: f64) -> f64 {
+    let max_h = (screen_height - 20.0).max(PICKER_HEIGHT);
+    (PICKER_HEIGHT + extra.max(0.0)).min(max_h)
+}
+
+/// Grow (or shrink back) the picker to fit expanded prompt rows. It keeps its
+/// top edge unless the bottom would leave the screen.
+pub fn resize_picker(app: &AppHandle, extra: f64) {
+    let Some((x, y, screen)) = PICKER_ANCHOR.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
+    let Some(w) = app.get_webview_window(PICKER_LABEL) else { return };
+    let h = picker_height(extra, screen.height);
+    let bottom = screen.y + screen.height - 10.0;
+    let top = y.min(bottom - h).max(screen.y + 10.0);
+    let _ = w.set_size(tauri::LogicalSize::new(PICKER_WIDTH, h));
+    let _ = w.set_position(tauri::LogicalPosition::new(x, top));
 }
 
 /// Hide the picker popup
@@ -1334,5 +1359,18 @@ mod grip_reveal_tests {
         assert!(grip_is_near((1030.0, 830.0), (1000.0, 800.0)));
         assert!(!grip_is_near((900.0, 800.0), (1000.0, 800.0)));
         assert!(!grip_is_near((1000.0, 700.0), (1000.0, 800.0)));
+    }
+}
+
+#[cfg(test)]
+mod picker_size_tests {
+    use super::*;
+
+    #[test]
+    fn picker_grows_with_prompts_and_stays_on_screen() {
+        assert_eq!(picker_height(0.0, 900.0), PICKER_HEIGHT);
+        assert_eq!(picker_height(-50.0, 900.0), PICKER_HEIGHT);
+        assert_eq!(picker_height(120.0, 900.0), PICKER_HEIGHT + 120.0);
+        assert_eq!(picker_height(5000.0, 900.0), 880.0);
     }
 }

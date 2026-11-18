@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-destination-prompts"
+description = "Enables the set_destination_prompts command without any pre-configured scope."
+commands.allow = ["set_destination_prompts"]
+
+[[permission]]
+identifier = "deny-set-destination-prompts"
+description = "Denies the set_destination_prompts command without any pre-configured scope."
+commands.deny = ["set_destination_prompts"]

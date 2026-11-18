@@ -10,6 +10,7 @@ pub mod native;
 pub mod panel;
 pub mod permissions;
 pub mod picker_keys;
+pub mod prompts;
 pub mod records;
 pub mod screenshot;
 pub mod selection;
@@ -59,6 +60,7 @@ pub fn run() {
         .manage(DestinationManager::new(app_data_dir.clone()))
         .manage(ShortcutStore::new(app_data_dir.clone()))
         .manage(app_settings::AppSettingsStore::new(app_data_dir.clone()))
+        .manage(prompts::PromptStore::new(app_data_dir.clone()))
         .manage(std::sync::Mutex::new(WebViewTabManager::new()))
         .manage(PickerState(std::sync::Mutex::new(Default::default())))
         .manage(commands::SystemConfigState::new())
@@ -248,6 +250,13 @@ pub fn run() {
             commands::reload_page,
             commands::show_chrome_menu,
             commands::show_tab_menu,
+            commands::get_prompt_templates,
+            commands::set_prompt_profession,
+            commands::set_template_prompts,
+            commands::restore_template_prompts,
+            commands::get_destination_prompts,
+            commands::set_destination_prompts,
+            commands::resize_picker,
         ])
         // Prevent page panel window close from exiting the app.
         // Settings window is allowed to close normally.

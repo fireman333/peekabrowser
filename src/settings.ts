@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isImeKey } from "./ime";
 import { listen } from "@tauri-apps/api/event";
 import { escapeHtml, faviconUrl } from "./icons";
+import { loadSitePrompts, setupPrompts } from "./settings-prompts";
 import { applyI18n, getLang, initI18n, normalizeLang, onLangChange, setLang, t, type Lang } from "./i18n";
 
 interface Destination {
@@ -282,7 +283,7 @@ async function setupSettings() {
 function applyDynamicTexts() {
   $("form-title").textContent = t(editingId ? "s.site.editTitle" : "s.site.addTitle");
   saveBtn.textContent = t(editingId ? "common.update" : "common.save");
-  $("reorder-btn").textContent = t(reordering ? "s.done" : "s.reorder");
+  $("reorder-btn").textContent = t(reordering ? "s.done" : "s.editDests");
 }
 
 // ─── Launch at login ───────────────────────────────────────
@@ -322,7 +323,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   // Load destinations first: the "Send to" select is built from them.
   await loadDestinations();
-  const steps: Array<() => unknown> = [setupAutostart, setupSettings, setupUpdates, loadShortcuts];
+  const steps: Array<() => unknown> = [setupAutostart, setupSettings, setupUpdates, loadShortcuts, () => setupPrompts(showMain)];
   for (const step of steps) {
     try { await step(); } catch (e) { console.warn("settings: step failed", e); }
   }
@@ -335,6 +336,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
 function showSite() {
   viewMain.classList.add("hidden");
+  $("view-templates").classList.add("hidden");
+  $("view-template").classList.add("hidden");
   viewSite.classList.remove("hidden");
   $("catalog-section").classList.toggle("hidden", !!editingId);
   $("delete-btn").classList.toggle("hidden", !editingId);
@@ -344,6 +347,8 @@ function showSite() {
 
 function showMain() {
   viewSite.classList.add("hidden");
+  $("view-templates").classList.add("hidden");
+  $("view-template").classList.add("hidden");
   viewMain.classList.remove("hidden");
   editingId = null;
   applyDynamicTexts();
@@ -460,6 +465,7 @@ function startEdit(d: Destination) {
   $<HTMLInputElement>("new-url").value = d.url;
   $<HTMLInputElement>("new-icon").value = d.icon;
   $<HTMLTextAreaElement>("new-clip-prompt").value = d.clip_prompt || "";
+  loadSitePrompts(d.id, d.url);
   showSite();
 }
 
@@ -500,6 +506,7 @@ function renderPresets() {
 function setupListeners() {
   addBtn.addEventListener("click", () => {
     resetForm();
+    loadSitePrompts(null, "");
     showSite();
   });
 

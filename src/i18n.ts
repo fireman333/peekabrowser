@@ -93,6 +93,7 @@ const DICT = {
     en: "⌘C ⌘C and the three-finger tap need it. Click Re-grant, then switch Peekabrowser on in System Settings; it turns on automatically once granted.",
   },
   "s.reorder": { "zh-TW": "重新排序", en: "Reorder" },
+  "s.editDests": { "zh-TW": "編輯", en: "Edit" },
   "s.done": { "zh-TW": "完成", en: "Done" },
   "s.default": { "zh-TW": "預設", en: "Default" },
   "s.addSite": { "zh-TW": "＋ 新增網站", en: "+ Add a site" },
@@ -112,6 +113,48 @@ const DICT = {
   "s.github": { "zh-TW": "GitHub 發行頁", en: "GitHub releases" },
   "s.license": { "zh-TW": "授權", en: "License" },
   "s.signature": { "zh-TW": "Peekabrowser {v} · WLK", en: "Peekabrowser {v} · WLK" },
+
+  // Prompts (per destination) and profession templates
+  "p.row": { "zh-TW": "職業提示詞", en: "Prompts for your profession" },
+  "p.row.foot": { "zh-TW": "每個網站還能在自己的頁面加專屬提示詞。", en: "Each site can also have its own prompts on its page." },
+  "p.list.foot": {
+    "zh-TW": "點圓圈選擇各目的地要用的提示詞預設。打開一個職業，可以新增、編輯、刪除或排序它的提示詞。",
+    en: "Click the circle to choose the prompts your destinations start from. Open a profession to add, edit, delete or reorder its prompts.",
+  },
+  "p.count": { "zh-TW": "{n} 個提示詞", en: "{n} prompts" },
+  "p.use": { "zh-TW": "使用這個職業的提示詞", en: "Use this profession's prompts" },
+  "p.selected": { "zh-TW": "已選用", en: "Selected" },
+  "p.prompts": { "zh-TW": "提示詞", en: "Prompts" },
+  "p.prompt": { "zh-TW": "提示詞", en: "Prompt" },
+  "p.add": { "zh-TW": "＋ 新增提示詞", en: "+ Add prompt" },
+  "p.edit": { "zh-TW": "編輯", en: "Edit" },
+  "p.delete": { "zh-TW": "刪除", en: "Delete" },
+  "p.empty": { "zh-TW": "沒有提示詞", en: "No prompts" },
+  "p.template.foot": {
+    "zh-TW": "使用這個職業的目的地會先列出這些提示詞，再列出各自的提示詞。你在某個目的地裡改過的提示詞會維持你改的版本。",
+    en: "Destinations using this profession show these prompts first, then their own. A prompt you changed inside a destination stays as you changed it.",
+  },
+  "p.dest.foot": {
+    "zh-TW": "提示詞會放在目的地的提示詞前綴與你的查詢之前。",
+    en: "A prompt goes before the destination's prompt prefix and your query.",
+  },
+  "p.dest.afterSave": { "zh-TW": "儲存網站後，就能設定它的提示詞。", en: "Save the site to set up its prompts." },
+  "p.restore": { "zh-TW": "還原內建提示詞", en: "Restore built-in prompts" },
+  "p.restoreConfirm": {
+    "zh-TW": "要還原內建提示詞嗎？\n\n這個職業的提示詞會回到原本的四個。你在目的地裡新增或修改的提示詞會保留。",
+    en: "Restore built-in prompts?\n\nThis profession's prompts go back to the original four. Prompts you added or changed inside a destination are kept.",
+  },
+  "p.deleteConfirm": { "zh-TW": "要刪除「{name}」嗎？", en: "Delete \u201c{name}\u201d?" },
+  "p.namePh": { "zh-TW": "例：簡單解釋", en: "e.g. Explain simply" },
+  "p.promptPh": { "zh-TW": "例：請簡單解釋：", en: "e.g. Explain this simply:" },
+  "p.saveFailed": { "zh-TW": "儲存提示詞失敗：", en: "Failed to save prompts: " },
+  "prof.general": { "zh-TW": "一般", en: "General" },
+  "prof.student": { "zh-TW": "學生", en: "Student" },
+  "prof.physician": { "zh-TW": "醫師", en: "Physician" },
+  "prof.lawyer": { "zh-TW": "律師", en: "Lawyer" },
+  "prof.researcher": { "zh-TW": "研究人員", en: "Researcher" },
+  "prof.engineer": { "zh-TW": "工程師", en: "Engineer" },
+  "prof.teacher": { "zh-TW": "教師", en: "Teacher" },
   "picker.defaultTag": { "zh-TW": "預設", en: "Default" },
 
   // ─── Picker ───
@@ -123,6 +166,8 @@ const DICT = {
   "picker.hint": { "zh-TW": "C V B N M 快速選擇 · Esc 關閉", en: "C V B N M to pick · Esc to close" },
   "picker.shotAlt": { "zh-TW": "截圖預覽", en: "Screenshot preview" },
   "picker.prompt": { "zh-TW": "提示詞", en: "prompt" },
+  "picker.promptHint": { "zh-TW": "長按、右鍵或 → 可選提示詞", en: "Hold, right-click or → for prompts" },
+  "picker.promptCount": { "zh-TW": "{n} 個提示詞", en: "{n} prompts" },
 
   // ─── Sidebar ───
   "side.save": { "zh-TW": "儲存回答（⌘⇧E）", en: "Save answer (⌘⇧E)" },

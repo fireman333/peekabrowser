@@ -134,6 +134,9 @@ pub fn remove_destination(
     id: String,
 ) {
     dest_manager.remove(&id);
+    if let Some(store) = app.try_state::<crate::prompts::PromptStore>() {
+        store.update(|d| d.remove_destination(&id));
+    }
     let _ = tab_manager;
     crate::lifecycle::remove_pages_for_dest(&app, &id);
 
@@ -253,12 +256,20 @@ pub struct PickerData {
     text: String,
     /// Small preview for image payloads (data URL).
     image_preview: Option<String>,
+    /// Destination ID → its prompts (system destinations have none).
+    prompts: std::collections::HashMap<String, Vec<crate::prompts::QueryLens>>,
+}
+
+/// Calendar / Reminders destinations: prompts make no sense there.
+fn is_system_destination(dest: &Destination) -> bool {
+    dest.url.starts_with("system://") || dest.url.starts_with("https://system://")
 }
 
 #[tauri::command]
 pub fn get_picker_data(
     dest_manager: State<DestinationManager>,
     picker_state: State<PickerState>,
+    prompt_store: State<crate::prompts::PromptStore>,
 ) -> PickerData {
     let pending = picker_state.0.lock().map(|s| s.payload.clone()).unwrap_or(None);
     let (kind, text, image_preview) = match pending {
@@ -271,7 +282,15 @@ pub fn get_picker_data(
         }
         None => ("", String::new(), None),
     };
-    PickerData { destinations: dest_manager.get_all(), kind: kind.into(), text, image_preview }
+    let destinations = dest_manager.get_all();
+    let data = prompt_store.get();
+    let english = crate::i18n::is_english();
+    let prompts = destinations
+        .iter()
+        .filter(|d| !is_system_destination(d))
+        .map(|d| (d.id.clone(), data.prompts_for(&d.id, english)))
+        .collect();
+    PickerData { destinations, kind: kind.into(), text, image_preview, prompts }
 }
 
 /// Handle system:// destinations — store state and open config window
@@ -640,9 +659,10 @@ pub fn ocr_image(path: &std::path::Path) -> Result<String, String> {
 /// User picked a destination in the picker popup — always creates a NEW page.
 /// The payload comes from the pending query captured at trigger time; `text`
 /// is accepted for compatibility but a typed payload is preferred.
+/// `prompt_id` picks one of the destination's prompts to go first.
 #[tauri::command]
-pub fn pick_destination(app: AppHandle, id: String, text: Option<String>) -> Result<(), String> {
-    pick_destination_impl(&app, &id, text)
+pub fn pick_destination(app: AppHandle, id: String, text: Option<String>, prompt_id: Option<String>) -> Result<(), String> {
+    pick_destination_impl(&app, &id, text, prompt_id.as_deref())
 }
 
 /// Pick the n-th destination in picker order (keyboard shortcut / auto-send).
@@ -653,7 +673,7 @@ pub fn pick_destination_by_index(app: &AppHandle, index: usize) -> Result<(), St
         .get(index)
         .map(|d| d.id.clone())
         .ok_or("No destination at that position")?;
-    pick_destination_impl(app, &id, None)
+    pick_destination_impl(app, &id, None, None)
 }
 
 /// Send the pending payload (already stored in `PickerState`) according to
@@ -691,7 +711,7 @@ pub fn route_text_from_other_apps_with(app: &AppHandle, force_choose: bool) {
                 }))
                 .unwrap_or_default();
             let dest = dests.iter().find(|d| d.id == id).cloned();
-            let _ = app.run_on_main_thread(move || match pick_destination_impl(&app2, &id, None) {
+            let _ = app.run_on_main_thread(move || match pick_destination_impl(&app2, &id, None, None) {
                 Ok(()) => {
                     if let Some(dest) = dest {
                         crate::panel::lookup_highlight::show_sent(&app2, cursor, &dest, &text);
@@ -709,7 +729,7 @@ pub fn route_text_from_other_apps_with(app: &AppHandle, force_choose: bool) {
 
 /// Shared by the picker click, its keyboard shortcuts and auto-send.
 /// Must run on the main thread (creates/positions windows).
-pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) -> Result<(), String> {
+pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>, prompt_id: Option<&str>) -> Result<(), String> {
     let app = app.clone();
     let id = id.to_string();
     let dest_manager = app.state::<DestinationManager>();
@@ -750,6 +770,16 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
 
     crate::panel::show_panel(&app);
 
+    // Chosen prompt (if any) + the destination's prompt prefix.
+    let lens_prompt = prompt_id
+        .and_then(|pid| {
+            let store = app.try_state::<crate::prompts::PromptStore>()?;
+            let list = store.get().prompts_for(&dest.id, crate::i18n::is_english());
+            list.into_iter().find(|l| l.id == pid).map(|l| l.prompt)
+        })
+        .unwrap_or_default();
+    let prefix = crate::prompts::compose(&lens_prompt, &dest.clip_prompt, "");
+
     // Remember the choice for "Text from other apps → Last used".
     if let Some(store) = app.try_state::<crate::app_settings::AppSettingsStore>() {
         let mut s = store.get();
@@ -771,8 +801,8 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
             }
         };
         let prompt = match &payload {
-            Payload::Text { text } => format!("{}{}", dest.clip_prompt, text),
-            Payload::Image { .. } => dest.clip_prompt.clone(),
+            Payload::Text { text } => crate::prompts::compose(&lens_prompt, &dest.clip_prompt, text),
+            Payload::Image { .. } => prefix.clone(),
         };
         store
             .create_query(crate::records::NewQuery {
@@ -804,7 +834,7 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
     };
     crate::delivery::spawn(
         app.clone(),
-        Delivery { target, payload, prompt: dest.clip_prompt.clone(), record_id },
+        Delivery { target, payload, prompt: prefix, record_id },
     );
     Ok(())
 }
@@ -812,6 +842,116 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
 #[tauri::command]
 pub fn hide_picker_panel(app: AppHandle) {
     crate::panel::hide_picker(&app);
+}
+
+/// The picker grows by `extra` points below its base height while a
+/// destination's prompts are expanded (0 = back to the base height).
+#[tauri::command]
+pub fn resize_picker(app: AppHandle, extra: f64) {
+    crate::panel::resize_picker(&app, extra);
+}
+
+// ─── Prompts (per destination) and profession templates ────────────────────
+
+#[derive(Serialize)]
+pub struct PromptTemplateInfo {
+    id: String,
+    edited: bool,
+    prompts: Vec<crate::prompts::QueryLens>,
+}
+
+#[derive(Serialize)]
+pub struct PromptTemplates {
+    /// Selected template.
+    profession: String,
+    /// All seven, in fixed order.
+    templates: Vec<PromptTemplateInfo>,
+}
+
+fn prompt_templates(data: &crate::prompts::PromptData) -> PromptTemplates {
+    let english = crate::i18n::is_english();
+    PromptTemplates {
+        profession: data.profession().to_string(),
+        templates: crate::prompts::PROFESSIONS
+            .iter()
+            .map(|p| PromptTemplateInfo {
+                id: p.to_string(),
+                edited: data.is_template_edited(p),
+                prompts: data.template_prompts(p, english),
+            })
+            .collect(),
+    }
+}
+
+fn check_profession(p: &str) -> Result<&'static str, String> {
+    crate::prompts::PROFESSIONS.iter().copied().find(|x| *x == p).ok_or_else(|| format!("Unknown profession: {}", p))
+}
+
+#[tauri::command]
+pub fn get_prompt_templates(store: State<crate::prompts::PromptStore>) -> PromptTemplates {
+    prompt_templates(&store.get())
+}
+
+#[tauri::command]
+pub fn set_prompt_profession(store: State<crate::prompts::PromptStore>, profession: String) -> Result<PromptTemplates, String> {
+    let p = check_profession(&profession)?;
+    let english = crate::i18n::is_english();
+    store.update(|d| d.set_profession(p, english));
+    Ok(prompt_templates(&store.get()))
+}
+
+/// Replaces a template's prompts (add / edit / delete / reorder). New items
+/// come without an ID and get `<profession>.user.<uuid>`.
+#[tauri::command]
+pub fn set_template_prompts(
+    store: State<crate::prompts::PromptStore>,
+    profession: String,
+    prompts: Vec<crate::prompts::QueryLens>,
+) -> Result<PromptTemplates, String> {
+    let p = check_profession(&profession)?;
+    let english = crate::i18n::is_english();
+    store.update(|d| {
+        let before = d.template_prompts(p, english);
+        let list = crate::prompts::prepare_list(&before, prompts, || crate::prompts::new_template_prompt_id(p))?;
+        if list != before {
+            d.set_template(p, Some(list), english);
+        }
+        Ok::<(), String>(())
+    })?;
+    Ok(prompt_templates(&store.get()))
+}
+
+#[tauri::command]
+pub fn restore_template_prompts(store: State<crate::prompts::PromptStore>, profession: String) -> Result<PromptTemplates, String> {
+    let p = check_profession(&profession)?;
+    let english = crate::i18n::is_english();
+    store.update(|d| d.restore_template(p, english));
+    Ok(prompt_templates(&store.get()))
+}
+
+#[tauri::command]
+pub fn get_destination_prompts(store: State<crate::prompts::PromptStore>, destination_id: String) -> Vec<crate::prompts::QueryLens> {
+    store.get().prompts_for(&destination_id, crate::i18n::is_english())
+}
+
+/// Replaces a destination's prompts (add / edit / delete / reorder). New items
+/// come without an ID and get a plain UUID.
+#[tauri::command]
+pub fn set_destination_prompts(
+    store: State<crate::prompts::PromptStore>,
+    destination_id: String,
+    prompts: Vec<crate::prompts::QueryLens>,
+) -> Result<Vec<crate::prompts::QueryLens>, String> {
+    let english = crate::i18n::is_english();
+    store.update(|d| {
+        let before = d.prompts_for(&destination_id, english);
+        let list = crate::prompts::prepare_list(&before, prompts, || uuid::Uuid::new_v4().to_string())?;
+        if list != before {
+            d.set_prompts(&destination_id, list, english);
+        }
+        Ok::<(), String>(())
+    })?;
+    Ok(store.get().prompts_for(&destination_id, english))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
