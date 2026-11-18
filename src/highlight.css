@@ -1,5 +1,21 @@
-/* Three-finger lookup highlight: a Tide box that blooms around the captured
-   text, holds, then fades (iPad "inputGlow": in 0.2s, hold 0.4s, out 0.4s). */
+/* Three-finger lookup highlight: a Tide box that pops out around the captured
+   text, sends one ripple, then fades (~0.56 s in total). When the text's
+   bounds are unknown, a word-sized marker pill sweeps open at the pointer
+   instead. The overlay cannot see the page underneath, so the Tide stroke is
+   always paired with a ring of the opposite luminance: that keeps it readable
+   on both light and dark pages, whatever the system appearance. */
+:root {
+  --hl-ring: rgba(255, 255, 255, 0.92); /* light scheme: Tide is dark */
+  --hl-fill: 26%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hl-ring: rgba(0, 0, 0, 0.6); /* dark scheme: Tide is bright */
+    --hl-fill: 30%;
+  }
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -10,33 +26,65 @@ html, body {
 
 #hl {
   position: absolute;
-  inset: var(--pad, 10px);
-  border-radius: 7px;
-  border: 2px solid var(--tide);
-  background: color-mix(in srgb, var(--tide) 14%, transparent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--tide) 45%, transparent);
+  inset: var(--pad, 18px);
+  box-sizing: border-box;
+  border-radius: 6px;
+  border: 2.5px solid var(--tide);
+  background: color-mix(in srgb, var(--tide) var(--hl-fill), transparent);
+  box-shadow:
+    0 0 0 1.5px var(--hl-ring),
+    0 2px 9px rgba(0, 0, 0, 0.32),
+    0 0 12px 2px color-mix(in srgb, var(--tide) 60%, transparent);
   opacity: 0;
 }
 
-#hl.dot {
-  border-radius: 50%;
+/* One ripple leaving the box. */
+#hl::after {
+  content: "";
+  position: absolute;
+  inset: -2.5px;
+  border-radius: inherit;
+  border: 2px solid var(--tide);
+  opacity: 0;
+}
+
+#hl.pill,
+#hl.pill::after {
+  border-radius: 999px;
 }
 
 #hl.play {
   animation:
-    hl-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.25) forwards,
-    hl-glow 0.6s ease-out 0.05s forwards,
-    hl-out 0.4s ease-in 0.6s forwards;
+    hl-pop 0.18s cubic-bezier(0.2, 0.8, 0.3, 1) forwards,
+    hl-out 0.2s ease-in 0.36s forwards;
 }
 
-@keyframes hl-in {
-  from { opacity: 0; transform: scale(1.18); }
-  to { opacity: 1; transform: scale(1); }
+#hl.play::after {
+  animation: hl-ripple 0.4s ease-out 0.08s forwards;
 }
 
-@keyframes hl-glow {
-  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tide) 50%, transparent); }
-  to { box-shadow: 0 0 0 8px color-mix(in srgb, var(--tide) 0%, transparent); }
+/* The pill opens sideways from the pointer, like a marker stroke over a word. */
+#hl.pill.play {
+  animation:
+    hl-sweep 0.2s cubic-bezier(0.2, 0.8, 0.3, 1) forwards,
+    hl-out 0.2s ease-in 0.36s forwards;
+}
+
+/* Pixel offsets rather than scale(): a long line must not overshoot the window. */
+@keyframes hl-pop {
+  0% { opacity: 0; inset: calc(var(--pad, 18px) + 4px); }
+  60% { opacity: 1; inset: calc(var(--pad, 18px) - 5px); }
+  100% { opacity: 1; inset: var(--pad, 18px); }
+}
+
+@keyframes hl-sweep {
+  from { opacity: 0; clip-path: inset(-20px 50%); }
+  to { opacity: 1; clip-path: inset(-20px -20px); }
+}
+
+@keyframes hl-ripple {
+  from { opacity: 0.85; inset: -2.5px; }
+  to { opacity: 0; inset: -13px; }
 }
 
 @keyframes hl-out {
@@ -44,11 +92,19 @@ html, body {
   to { opacity: 0; }
 }
 
+@keyframes hl-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  #hl.play {
+  #hl.play,
+  #hl.pill.play {
     animation:
-      hl-fade-in 0.15s linear forwards,
-      hl-out 0.3s linear 0.6s forwards;
+      hl-fade-in 0.12s linear forwards,
+      hl-out 0.2s linear 0.36s forwards;
   }
-  @keyframes hl-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  #hl.play::after {
+    animation: none;
+  }
 }

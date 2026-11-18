@@ -480,7 +480,7 @@ fn on_tap(app: &AppHandle) {
         return;
     };
     log::info!("three-finger: captured {} chars via {}", cap.text.chars().count(), cap.tier.label());
-    crate::panel::lookup_highlight::show(app, cap.bounds, (x, y));
+    crate::panel::lookup_highlight::show(app, cap.bounds, (x, y), &cap.text);
     let must_choose = cap.tier.must_choose();
     let source_app = cap.source_app.or_else(crate::native::frontmost_app_name);
     if let Some(state) = app.try_state::<crate::delivery::PickerState>() {
