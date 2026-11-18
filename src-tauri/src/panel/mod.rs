@@ -461,7 +461,7 @@ const PICKER_WIDTH: f64 = 248.0;
 const PICKER_HEIGHT: f64 = 420.0;
 
 /// Width of the rail (sidebar UI panel), iPad "medium" rail.
-pub const TAB_BAR_WIDTH: f64 = 76.0;
+pub const TAB_BAR_WIDTH: f64 = 70.0;
 /// Default viewer width (medium)
 pub const VIEWER_WIDTH: f64 = 340.0;
 /// Total sidebar width used for off-screen positioning

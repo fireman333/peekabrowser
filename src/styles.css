@@ -1,4 +1,7 @@
-/* Peekabrowser rail (sidebar window) — iPad "medium" rail. */
+/* Peekabrowser rail (sidebar window) — iPad "medium" rail: 70 wide, items
+   62×58 inset 4 (spec §5.1). The first item starts 8px down so its top edge
+   and its icon's centre line match the address capsule in the chrome bar
+   (8px margin, 44px row). */
 @import "./theme.css";
 
 * {
@@ -8,7 +11,8 @@
 }
 
 :root {
-  --rail-width: 76px;
+  --rail-width: 70px; /* = TAB_BAR_WIDTH in panel/mod.rs */
+  --rail-inset: 4px;
   --focus: color-mix(in srgb, var(--tide) 60%, transparent);
 }
 
@@ -49,11 +53,13 @@ html, body {
   width: var(--rail-width);
   min-width: var(--rail-width);
   height: 100%;
-  border-right: 1px solid var(--line-hair);
+  /* Hairline as a shadow, not a border: a border would leave 69px and put
+     the 62px items on half pixels. */
+  box-shadow: inset -1px 0 0 var(--line-hair);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: var(--s2) 0 var(--s2);
+  padding: var(--s1) 0 var(--s2);
   overflow: hidden;
 }
 
@@ -67,7 +73,9 @@ html, body {
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
-  padding-top: 2px;
+  /* Rail 4 + list 4 = 8 (the chrome margin); the list's share keeps the
+     focus ring of the first item from being clipped. */
+  padding-top: var(--s1);
 }
 
 #tab-list::-webkit-scrollbar {
@@ -88,8 +96,7 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  padding-top: 3px;
+  justify-content: center;
   transition: background var(--t-quick) var(--ease-smooth);
 }
 
@@ -102,14 +109,14 @@ html, body {
   box-shadow: var(--shadow-selected);
 }
 
-/* Tide marker on the rail's leading edge (the item is inset 7px). */
+/* Tide marker on the rail's leading edge (the item is inset 4px). */
 .rail-item.selected::before {
   content: "";
   position: absolute;
-  left: -7px;
+  left: calc(-1 * var(--rail-inset));
   top: 50%;
   transform: translateY(-50%);
-  width: 4px;
+  width: 3px;
   height: 20px;
   border-radius: 0 2px 2px 0;
   background: var(--tide);
@@ -161,7 +168,7 @@ html, body {
 }
 
 .rail-name {
-  margin-top: 2px;
+  margin-top: 3px;
   max-width: 58px;
   height: 12px;
   font-size: var(--fs-micro);
@@ -213,14 +220,15 @@ html, body {
   display: block;
 }
 
-/* Tab count: up to three 4px dots, a number badge from four tabs on. */
+/* Tab count in the item's top-right corner: up to three 4px dots, a number
+   badge from four tabs on. Out of flow, so icon + name stay centred. */
 .tab-indicator {
-  height: 12px;
-  margin-top: 1px;
+  position: absolute;
+  top: 4px;
+  right: 6px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 3px;
+  gap: 2px;
 }
 
 .tab-indicator i {
@@ -247,7 +255,7 @@ html, body {
 
 .rail-divider {
   flex-shrink: 0;
-  width: 44px;
+  width: 40px;
   height: 1px;
   background: var(--line-hair);
   margin: 6px auto;
