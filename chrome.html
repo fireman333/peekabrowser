@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Peekabrowser Toolbar</title>
+    <link rel="stylesheet" href="/src/chrome.css" />
+    <script>document.addEventListener('contextmenu', e => { if (!(e.target instanceof HTMLInputElement)) e.preventDefault(); });</script>
+    <script type="module" src="/src/chrome.ts" defer></script>
+  </head>
+  <body>
+    <div id="chrome" role="toolbar" data-i18n-aria="chrome.toolbar">
+      <div class="row" id="row-top">
+        <div class="glass-row" id="address" data-i18n-title="chrome.address">
+          <span id="addr-lock" data-icon="sf-lock" class="hidden" data-i18n-title="chrome.secure"></span>
+          <button id="addr-display" data-i18n-aria="chrome.address"><span id="addr-host"></span><span id="addr-path"></span></button>
+          <input id="addr-input" class="hidden" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" data-i18n-placeholder="chrome.addressPh" data-i18n-aria="chrome.address" />
+          <div id="load-line" class="hidden" role="progressbar" data-i18n-aria="chrome.loading"></div>
+        </div>
+        <div class="glass-row" id="nav" role="group" data-i18n-aria="chrome.nav">
+          <button class="nav-btn" id="open-browser-btn" data-icon="sf-safari" data-i18n-aria="chrome.openBrowser" data-i18n-title="chrome.openBrowser"></button>
+          <span class="nav-sep" aria-hidden="true"></span>
+          <button class="nav-btn" id="back-btn" data-icon="sf-chevron-left" data-i18n-aria="side.back" data-i18n-title="side.back"></button>
+          <button class="nav-btn" id="forward-btn" data-icon="sf-chevron-right" data-i18n-aria="side.forward" data-i18n-title="side.forward"></button>
+          <button class="nav-btn" id="reload-btn" data-icon="sf-arrow-clockwise" data-i18n-aria="side.reload" data-i18n-title="side.reload"></button>
+          <span class="nav-sep" aria-hidden="true"></span>
+          <button class="nav-btn" id="save-btn" data-icon="sf-save" data-i18n-aria="side.save" data-i18n-title="side.save"></button>
+          <button class="nav-btn" id="more-btn" data-icon="sf-ellipsis" aria-haspopup="menu" data-i18n-aria="chrome.more" data-i18n-title="chrome.more"></button>
+          <button class="nav-btn" id="new-tab-btn" data-icon="sf-plus" data-i18n-aria="chrome.newTab" data-i18n-title="chrome.newTab"></button>
+        </div>
+      </div>
+      <div class="row hidden" id="row-tabs">
+        <div class="glass-row" id="tab-row">
+          <div id="chips" role="tablist" data-i18n-aria="chrome.tabs"></div>
+          <span class="tab-sep" aria-hidden="true"></span>
+          <button class="nav-btn" id="tab-plus" data-icon="sf-plus" data-i18n-aria="chrome.newTab" data-i18n-title="chrome.newTab"></button>
+        </div>
+      </div>
+    </div>
+    <div id="status-live" class="visually-hidden" role="status" aria-live="polite"></div>
+  </body>
+</html>

@@ -10,8 +10,10 @@ pub mod native;
 pub mod panel;
 pub mod permissions;
 pub mod picker_keys;
+pub mod prompts;
 pub mod records;
 pub mod screenshot;
+pub mod selection;
 pub mod tray;
 pub mod updater;
 pub mod webviews;
@@ -27,7 +29,7 @@ pub use delivery::PickerState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    init_logging();
 
     // Resolve app data directory for persistent storage
     let app_data_dir = if let Some(home) = std::env::var_os("HOME") {
@@ -58,6 +60,7 @@ pub fn run() {
         .manage(DestinationManager::new(app_data_dir.clone()))
         .manage(ShortcutStore::new(app_data_dir.clone()))
         .manage(app_settings::AppSettingsStore::new(app_data_dir.clone()))
+        .manage(prompts::PromptStore::new(app_data_dir.clone()))
         .manage(std::sync::Mutex::new(WebViewTabManager::new()))
         .manage(PickerState(std::sync::Mutex::new(Default::default())))
         .manage(commands::SystemConfigState::new())
@@ -87,8 +90,16 @@ pub fn run() {
             // Create the sidebar NSPanel
             panel::create_sidebar_panel(&handle)?;
 
+            // Top chrome above the page (address bar, navigation, tab row) and
+            // its native menus (⋯, tab right-click).
+            panel::create_chrome_panel(&handle)?;
+            panel::create_grip_panel(&handle)?;
+            panel::create_empty_panel(&handle)?;
+            handle.on_menu_event(|app, event| commands::handle_chrome_menu(app, event.id().as_ref()));
+
             // Create the floating destination picker popup
             panel::create_picker_panel(&handle)?;
+            panel::lookup_highlight::create(&handle)?; // three-finger lookup highlight
             picker_keys::install(&handle);
 
             // Setup system tray
@@ -122,6 +133,26 @@ pub fn run() {
 
             // Start double-copy detector
             hotkeys::double_cmd_c::start_double_cmd_c_detector(handle.clone());
+
+            // three-finger lookup (opt-in; starts only if three_finger_lookup is on)
+            hotkeys::three_finger::sync(&handle);
+
+            // Debug builds only: PB_DEBUG_SHOW=1 shows the panel with the first
+            // destination at launch (for screenshots / UI checks).
+            #[cfg(debug_assertions)]
+            if std::env::var_os("PB_DEBUG_SHOW").is_some() {
+                let h = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    let h2 = h.clone();
+                    let _ = h.run_on_main_thread(move || {
+                        panel::show_panel(&h2);
+                        if let Some(d) = h2.state::<destinations::DestinationManager>().get_all().into_iter().next() {
+                            let _ = lifecycle::open_new_page(&h2, &d);
+                        }
+                    });
+                });
+            }
 
             // Builds before v2.0.5 were ad-hoc signed, so their Accessibility / Screen
             // Recording entries no longer match. Once, clear them and ask again.
@@ -165,11 +196,13 @@ pub fn run() {
             commands::send_to_active,
             commands::get_clipboard_text,
             commands::set_viewer_width,
+            commands::resize_drag,
             commands::get_picker_data,
             commands::pick_destination,
             commands::hide_picker_panel,
             commands::open_settings_url,
             commands::regrant_accessibility,
+            commands::open_trackpad_settings, // settings agent
             commands::open_settings_window,
             commands::get_pages,
             commands::switch_page,
@@ -205,6 +238,26 @@ pub fn run() {
             commands::check_for_updates,
             commands::install_update,
             commands::open_release_page,
+            // chrome/tab commands
+            commands::get_chrome_state,
+            commands::chrome_navigate,
+            commands::refresh_chrome,
+            commands::reopen_closed_tab,
+            commands::close_other_tabs,
+            commands::close_tabs_to_right,
+            commands::cycle_tab,
+            commands::copy_page_url,
+            commands::open_page_in_browser,
+            commands::reload_page,
+            commands::show_chrome_menu,
+            commands::show_tab_menu,
+            commands::get_prompt_templates,
+            commands::set_prompt_profession,
+            commands::set_template_prompts,
+            commands::restore_template_prompts,
+            commands::get_destination_prompts,
+            commands::set_destination_prompts,
+            commands::resize_picker,
         ])
         // Prevent page panel window close from exiting the app.
         // Settings window is allowed to close normally.
@@ -238,4 +291,71 @@ pub fn run() {
                 api.prevent_exit();
             }
         });
+}
+
+#[cfg(test)]
+mod acl_tests {
+    //! The app ACL (build.rs + permissions/app.toml) must list exactly the
+    //! commands in `generate_handler!`, or a window loses a command silently.
+    use std::collections::BTreeSet;
+
+    fn handler_commands() -> BTreeSet<String> {
+        let src = include_str!("lib.rs");
+        let start = src.find("generate_handler![").expect("generate_handler");
+        let body = &src[start..start + src[start..].find("])").expect("end of handler list")];
+        body.split("commands::").skip(1).map(|s| s.split(|c: char| c == ',' || c.is_whitespace()).next().unwrap().to_string()).collect()
+    }
+
+    fn quoted_in(src: &str, from: &str, to: &str) -> BTreeSet<String> {
+        let a = src.find(from).expect(from);
+        let b = a + src[a..].find(to).expect(to);
+        src[a..b].split('"').skip(1).step_by(2).map(str::to_string).collect()
+    }
+
+    #[test]
+    fn build_manifest_matches_handler() {
+        let manifest = quoted_in(include_str!("../build.rs"), "const COMMANDS", "];");
+        assert_eq!(manifest, handler_commands());
+    }
+
+    #[test]
+    fn local_windows_set_allows_every_command() {
+        let toml = include_str!("../permissions/app.toml");
+        let local = quoted_in(toml, "identifier = \"local-windows\"", "]");
+        let want: BTreeSet<String> = handler_commands().iter().map(|c| format!("allow-{}", c.replace('_', "-"))).collect();
+        assert_eq!(local.into_iter().filter(|p| p.starts_with("allow-")).collect::<BTreeSet<_>>(), want);
+    }
+
+    #[test]
+    fn pages_only_get_the_tab_shortcuts() {
+        let toml = include_str!("../permissions/app.toml");
+        let page = quoted_in(toml, "identifier = \"page-shortcuts\"", "]");
+        let page: BTreeSet<String> = page.into_iter().filter(|p| p.starts_with("allow-")).collect();
+        let want: BTreeSet<String> =
+            ["allow-close-page", "allow-new-tab-for-active", "allow-cycle-tab", "allow-reopen-closed-tab"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(page, want);
+        let caps = include_str!("../capabilities/pages.json");
+        assert!(!caps.contains("core:") && !caps.contains("local-windows"), "pages must not get core/plugin/app-wide permissions");
+    }
+}
+
+/// Log to ~/Library/Logs/Peekabrowser/peekabrowser.log (info by default,
+/// RUST_LOG overrides) so problems in the installed app can be diagnosed.
+/// Falls back to stderr if the file can't be opened.
+fn init_logging() {
+    let mut b = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("peekabrowser_lib=info,peekabrowser=info"));
+    if let Some(home) = std::env::var_os("HOME") {
+        let dir = std::path::PathBuf::from(home).join("Library/Logs/Peekabrowser");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("peekabrowser.log");
+        // Start fresh when the log grows past 5 MB.
+        if std::fs::metadata(&path).map(|m| m.len() > 5 * 1024 * 1024).unwrap_or(false) {
+            let _ = std::fs::rename(&path, dir.join("peekabrowser.old.log"));
+        }
+        if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            b.target(env_logger::Target::Pipe(Box::new(f)));
+        }
+    }
+    b.format_timestamp_millis();
+    let _ = b.try_init();
 }

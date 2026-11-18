@@ -37,6 +37,7 @@ const CAPTURE_LABEL: Record<string, Key> = {
 const STATUS_LABEL: Record<string, Key> = {
   saved: "rec.stSaved",
   queued: "rec.stQueued",
+  draft: "rec.stDraft",
   injected: "rec.stInjected",
   generating: "rec.stGenerating",
   completed: "rec.stCompleted",

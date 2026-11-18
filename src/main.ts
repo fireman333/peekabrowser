@@ -1,7 +1,11 @@
+// The rail (sidebar window): destinations, then system destinations after a
+// divider, then Records / Pin / Settings. Navigation, the address bar and the
+// tab row live in the top chrome window (chrome.ts).
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { applyMaterial, destIcon, hydrateIcons, installFaviconFallback } from "./icons";
+import { applyMaterial, destTile, hydrateIcons, installFaviconFallback } from "./icons";
 import { initI18n, onLangChange, t } from "./i18n";
+import { installTabShortcuts } from "./tab-shortcuts";
 
 interface Destination {
   id: string;
@@ -21,6 +25,7 @@ interface PageInfo {
   label: string | null;
   state: PageState;
   generating: boolean;
+  unseen: boolean;
   title: string;
   url: string;
   query_id: string | null;
@@ -30,16 +35,20 @@ interface PageInfo {
 let destinations: Destination[] = [];
 let pages: PageInfo[] = [];
 let activePageId: string | null = null;
+/** Selected destination (may have no tabs: the empty state). */
+let activeDestId: string | null = null;
+let pinned = false;
 
 const tabList = document.getElementById("tab-list")!;
 const statusLive = document.getElementById("status-live")!;
 
 window.addEventListener("DOMContentLoaded", async () => {
   hydrateIcons();
-  // Language loads in the background; the sidebar renders immediately with the
+  // Language loads in the background; the rail renders immediately with the
   // default strings and re-renders if the saved language differs.
   onLangChange(() => {
-    renderTabBar();
+    renderRail();
+    renderPin();
     markUpdate(lastUpdate);
   });
   initI18n();
@@ -57,7 +66,7 @@ async function loadDestinations() {
   } catch (_e) {
     destinations = [];
   }
-  renderTabBar();
+  renderRail();
 }
 
 async function loadPages() {
@@ -66,60 +75,75 @@ async function loadPages() {
   } catch (_e) {
     pages = [];
   }
-  renderTabBar();
+  renderRail();
 }
 
-// ─── Tab Bar ────────────────────────────────────────────
+// ─── Rail ───────────────────────────────────────────────
 function isSystemDest(dest: Destination): boolean {
   return dest.url.includes("system://");
 }
 
-function renderTabBar() {
+function renderRail() {
   tabList.innerHTML = "";
   const sorted = [...destinations].sort((a, b) => a.order - b.order);
-  const regularDests = sorted.filter((d) => !isSystemDest(d));
-  const systemDests = sorted.filter((d) => isSystemDest(d));
+  const regular = sorted.filter((d) => !isSystemDest(d));
+  const system = sorted.filter((d) => isSystemDest(d));
 
-  regularDests.forEach((dest) => renderDestItem(dest));
-
-  if (systemDests.length > 0 && regularDests.length > 0) {
+  regular.forEach((dest) => tabList.appendChild(railItem(dest)));
+  if (system.length > 0 && regular.length > 0) {
     const sep = document.createElement("div");
-    sep.className = "system-separator";
+    sep.className = "rail-divider";
     sep.setAttribute("role", "separator");
     tabList.appendChild(sep);
   }
-  systemDests.forEach((dest) => renderDestItem(dest));
-  updateActionStates();
+  system.forEach((dest) => tabList.appendChild(railItem(dest)));
+  tabList.querySelector(".rail-item.selected")?.scrollIntoView({ block: "nearest" });
 }
 
-function pageLabel(page: PageInfo, idx: number): string {
-  const title = page.title?.trim() || `${page.dest_name} #${idx + 1}`;
-  const state = page.generating
-    ? t("side.stGenerating")
-    : page.state === "unloaded"
-      ? t("side.stUnloaded")
-      : page.id === activePageId
-        ? t("side.stCurrent")
-        : t("side.stIdle");
-  return `${title} (${state})`;
-}
-
-function renderDestItem(dest: Destination) {
-  const btn = document.createElement("button");
-  btn.className = "tab-btn dest-btn";
-  btn.setAttribute("role", "listitem");
-  const destPages = pages.filter((p) => p.dest_id === dest.id);
-  const hasActivePage = destPages.some((p) => p.id === activePageId);
-  if (hasActivePage) {
-    btn.classList.add("active");
-    btn.setAttribute("aria-current", "page");
+/** Tab indicator: none for one tab, up to three dots, a number from four on. */
+function indicator(count: number): HTMLElement {
+  const row = document.createElement("span");
+  row.className = "tab-indicator";
+  row.setAttribute("aria-hidden", "true");
+  if (count >= 4) {
+    const badge = document.createElement("span");
+    badge.className = "count-badge";
+    badge.textContent = String(count);
+    row.appendChild(badge);
+  } else if (count >= 2) {
+    for (let i = 0; i < count; i++) row.appendChild(document.createElement("i"));
   }
-  if (destPages.some((p) => p.generating)) btn.classList.add("generating");
+  return row;
+}
 
+function railItem(dest: Destination): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "rail-item";
+  btn.setAttribute("role", "listitem");
   btn.dataset.id = dest.id;
+  const destPages = pages.filter((p) => p.dest_id === dest.id);
+  const selected = dest.id === activeDestId;
+  const generating = destPages.some((p) => p.generating);
+  const unseen = !generating && destPages.some((p) => p.unseen);
+  btn.classList.toggle("selected", selected);
+  btn.classList.toggle("generating", generating);
+  btn.classList.toggle("unseen", unseen);
+  if (selected) btn.setAttribute("aria-current", "page");
+
+  const parts = [destPages.length > 1 ? t("rail.tabs", { name: dest.name, n: destPages.length }) : dest.name];
+  if (generating) parts.push(t("rail.generating"));
+  else if (unseen) parts.push(t("rail.unseen"));
+  btn.setAttribute("aria-label", parts.join("，"));
   btn.title = dest.name;
-  btn.setAttribute("aria-label", destPages.length ? t("side.pages", { name: dest.name, n: destPages.length }) : dest.name);
-  btn.innerHTML = destIcon(dest);
+
+  const iconWrap = document.createElement("span");
+  iconWrap.className = "rail-icon";
+  iconWrap.innerHTML = destTile(dest, 28) + '<span class="gen-ring"></span><span class="unseen-dot"></span>';
+  const name = document.createElement("span");
+  name.className = "rail-name";
+  name.textContent = dest.name;
+  btn.append(iconWrap, name, indicator(destPages.length));
+
   btn.addEventListener("click", () => {
     if (dest.url.includes("system://calendar")) {
       invoke("open_system_app", { appName: "Calendar" });
@@ -129,90 +153,24 @@ function renderDestItem(dest: Destination) {
       invoke("open_system_app", { appName: "Reminders" });
       return;
     }
+    // Shows the destination's most recent tab, or its empty state when it
+    // has none; never opens a tab.
     invoke("switch_destination", { id: dest.id }).catch(() => {});
   });
-  tabList.appendChild(btn);
-
-  if (destPages.length === 0) return;
-  const pageGroup = document.createElement("div");
-  pageGroup.className = "page-group";
-  pageGroup.setAttribute("role", "group");
-  pageGroup.setAttribute("aria-label", t("side.pagesGroup", { name: dest.name }));
-  destPages.forEach((page, idx) => {
-    const wrap = document.createElement("div");
-    wrap.className = "page-dot-wrap";
-
-    const dot = document.createElement("button");
-    const classes = ["page-dot"];
-    if (page.id === activePageId) classes.push("active");
-    if (page.state === "unloaded") classes.push("unloaded");
-    if (page.generating) classes.push("generating");
-    dot.className = classes.join(" ");
-    dot.textContent = String(idx + 1);
-    const label = pageLabel(page, idx);
-    dot.title = label;
-    dot.setAttribute("aria-label", label);
-    if (page.id === activePageId) dot.setAttribute("aria-current", "page");
-    dot.addEventListener("click", (e) => {
-      e.stopPropagation();
-      invoke("switch_page", { pageId: page.id }).catch(() => {});
-    });
-    dot.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closePage(page.id);
-    });
-    dot.addEventListener("keydown", (e) => {
-      if (e.key === "Delete" || e.key === "Backspace") {
-        e.preventDefault();
-        closePage(page.id);
-      }
-    });
-
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "page-close-btn";
-    closeBtn.innerHTML = "×";
-    closeBtn.title = t("side.closePage");
-    closeBtn.setAttribute("aria-label", t("side.closeNamed", { name: page.title || page.dest_name }));
-    closeBtn.tabIndex = -1; // Delete on the focused dot closes it from the keyboard
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      closePage(page.id);
-    });
-
-    wrap.appendChild(dot);
-    wrap.appendChild(closeBtn);
-    pageGroup.appendChild(wrap);
-  });
-  tabList.appendChild(pageGroup);
-}
-
-async function closePage(pageId: string) {
-  try {
-    await invoke("close_page", { pageId });
-  } catch (_e) {}
-}
-
-/** Disable actions that need a loaded page. */
-function updateActionStates() {
-  const active = pages.find((p) => p.id === activePageId);
-  const loaded = !!active && active.state !== "unloaded";
-  for (const id of ["save-btn", "back-btn", "forward-btn", "reload-btn", "open-browser-btn", "new-tab-btn"]) {
-    const el = document.getElementById(id) as HTMLButtonElement | null;
-    if (el) el.disabled = id === "new-tab-btn" ? !active : !loaded;
-  }
-}
-
-function flash(el: HTMLElement | null, kind: "ok" | "error") {
-  if (!el) return;
-  el.classList.remove("flash-ok", "flash-error");
-  void el.offsetWidth;
-  el.classList.add(kind === "ok" ? "flash-ok" : "flash-error");
-  setTimeout(() => el.classList.remove("flash-ok", "flash-error"), 1600);
+  return btn;
 }
 
 function announce(msg: string) {
   statusLive.textContent = msg;
+}
+
+const pinBtn = document.getElementById("pin-btn")!;
+function renderPin() {
+  pinBtn.classList.toggle("pinned", pinned);
+  pinBtn.setAttribute("aria-pressed", String(pinned));
+  const label = pinned ? t("rail.unpin") : t("rail.pin");
+  pinBtn.title = label;
+  pinBtn.setAttribute("aria-label", label);
 }
 
 // ─── Event listeners ─────────────────────────────────────
@@ -223,85 +181,23 @@ function on(id: string, fn: () => void) {
 function setupEventListeners() {
   on("settings-btn", () => invoke("open_settings_window").catch(() => {}));
   on("records-btn", () => invoke("open_records_window").catch(() => {}));
-  on("back-btn", () => invoke("go_back").catch(() => {}));
-  on("forward-btn", () => invoke("go_forward").catch(() => {}));
-  on("reload-btn", () => invoke("reload_active_page").catch(() => {}));
-  on("open-browser-btn", () => invoke("open_active_in_browser").catch(() => {}));
-  on("capture-btn", () => invoke("take_screenshot").catch(() => {}));
-  on("new-tab-btn", () => {
-    const activePage = pages.find((p) => p.id === activePageId);
-    if (activePage) invoke("new_tab", { id: activePage.dest_id }).catch(() => {});
-  });
 
-  const saveBtn = document.getElementById("save-btn");
-  on("save-btn", async () => {
-    try {
-      const r = await invoke<{ capture_status: string }>("save_answer");
-      const msg = r.capture_status === "partial" ? t("side.savedPartial") : t("side.saved");
-      saveBtn!.title = msg;
-      announce(msg);
-      flash(saveBtn, "ok");
-    } catch (e) {
-      const msg = String(e);
-      saveBtn!.title = msg;
-      announce(msg);
-      flash(saveBtn, "error");
-    }
-    setTimeout(() => (saveBtn!.title = t("side.save")), 4000);
-  });
-
-  const moreBtn = document.getElementById("more-btn")!;
-  const moreGroup = document.getElementById("more-group")!;
-  moreBtn.addEventListener("click", () => {
-    const open = moreGroup.classList.toggle("hidden") === false;
-    moreBtn.setAttribute("aria-expanded", String(open));
-    moreBtn.classList.toggle("active", open);
-  });
-
-  const pinBtn = document.getElementById("pin-btn")!;
-  const setPinned = (pinned: boolean) => {
-    pinBtn.classList.toggle("pinned", pinned);
-    pinBtn.setAttribute("aria-pressed", String(pinned));
-  };
-  invoke<boolean>("is_pinned").then(setPinned).catch(() => {});
+  invoke<boolean>("is_pinned")
+    .then((p) => {
+      pinned = p;
+      renderPin();
+    })
+    .catch(() => {});
   pinBtn.addEventListener("click", async () => {
     try {
-      setPinned(await invoke<boolean>("toggle_pin"));
+      pinned = await invoke<boolean>("toggle_pin");
+      renderPin();
     } catch (_e) {}
   });
 
-  document.addEventListener("keydown", async (e) => {
-    if (!e.metaKey) return;
-    const activePage = pages.find((p) => p.id === activePageId);
-    if (e.key === "r") {
-      e.preventDefault();
-      invoke("reload_active_page").catch(() => {});
-    } else if (e.key === "w") {
-      e.preventDefault();
-      if (activePageId) closePage(activePageId);
-    } else if (e.key === "[") {
-      e.preventDefault();
-      invoke("go_back").catch(() => {});
-    } else if (e.key === "]") {
-      e.preventDefault();
-      invoke("go_forward").catch(() => {});
-    } else if (e.key === "n") {
-      e.preventDefault();
-      if (activePage) invoke("new_tab", { id: activePage.dest_id }).catch(() => {});
-    }
-  });
-
-  document.querySelectorAll<HTMLButtonElement>(".width-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const preset = btn.dataset.width ?? "medium";
-      document.querySelectorAll(".width-btn").forEach((b) => {
-        b.classList.remove("active");
-        b.setAttribute("aria-checked", "false");
-      });
-      btn.classList.add("active");
-      btn.setAttribute("aria-checked", "true");
-      invoke("set_viewer_width", { preset }).catch(() => {});
-    });
+  installTabShortcuts({
+    activePageId: () => activePageId,
+    activeDestId: () => activeDestId,
   });
 }
 
@@ -322,12 +218,16 @@ function setupTauriListeners() {
 
   listen<PageInfo[]>("pages-updated", (event) => {
     pages = event.payload;
-    renderTabBar();
+    renderRail();
   }).catch(() => {});
 
   listen<string>("active-page-changed", (event) => {
     activePageId = event.payload || null;
-    renderTabBar();
+  }).catch(() => {});
+
+  listen<string>("active-dest-changed", (event) => {
+    activeDestId = event.payload || null;
+    renderRail();
   }).catch(() => {});
 
   listen("destinations-changed", () => loadDestinations()).catch(() => {});
@@ -336,12 +236,15 @@ function setupTauriListeners() {
   invoke<UpdateBadge>("get_update_status").then(markUpdate).catch(() => {});
   listen<UpdateBadge>("update-status", (e) => markUpdate(e.payload)).catch(() => {});
 
-  listen<string>("notice", (event) => {
-    announce(event.payload);
-    const save = document.getElementById("save-btn");
-    if (save) {
-      save.title = event.payload;
-      setTimeout(() => (save.title = t("side.save")), 4000);
-    }
-  }).catch(() => {});
+  listen<string>("notice", (event) => announce(event.payload)).catch(() => {});
+
+  // Pin can also change from the chrome or elsewhere; re-read when focused.
+  window.addEventListener("focus", () => {
+    invoke<boolean>("is_pinned")
+      .then((p) => {
+        pinned = p;
+        renderPin();
+      })
+      .catch(() => {});
+  });
 }

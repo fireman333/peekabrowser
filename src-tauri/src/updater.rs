@@ -65,11 +65,8 @@ fn set_status(app: &AppHandle, state: &str, message: &str, info: Option<UpdateIn
     if let Ok(mut g) = STATUS.lock() {
         *g = Some(st.clone());
     }
-    for label in [crate::panel::SIDEBAR_LABEL, "settings-window"] {
-        if let Some(w) = app.get_webview_window(label) {
-            let _ = w.emit("update-status", &st);
-        }
-    }
+    // `emit` is a broadcast: once reaches the rail and the settings window.
+    let _ = app.emit("update-status", &st);
 }
 
 // ─── Pure helpers (unit-tested) ─────────────────────────────────────────────

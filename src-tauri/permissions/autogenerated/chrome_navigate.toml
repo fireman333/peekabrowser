@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chrome-navigate"
+description = "Enables the chrome_navigate command without any pre-configured scope."
+commands.allow = ["chrome_navigate"]
+
+[[permission]]
+identifier = "deny-chrome-navigate"
+description = "Denies the chrome_navigate command without any pre-configured scope."
+commands.deny = ["chrome_navigate"]

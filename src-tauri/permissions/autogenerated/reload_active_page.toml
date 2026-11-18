@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reload-active-page"
+description = "Enables the reload_active_page command without any pre-configured scope."
+commands.allow = ["reload_active_page"]
+
+[[permission]]
+identifier = "deny-reload-active-page"
+description = "Denies the reload_active_page command without any pre-configured scope."
+commands.deny = ["reload_active_page"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-picker-panel"
+description = "Enables the hide_picker_panel command without any pre-configured scope."
+commands.allow = ["hide_picker_panel"]
+
+[[permission]]
+identifier = "deny-hide-picker-panel"
+description = "Denies the hide_picker_panel command without any pre-configured scope."
+commands.deny = ["hide_picker_panel"]

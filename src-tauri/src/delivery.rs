@@ -124,15 +124,29 @@ pub fn spawn(app: AppHandle, d: Delivery) {
             }
             return;
         }
+        if matches!(d.payload, Payload::Text { .. }) && !auto_submit(&app) {
+            // Placed in the box but not sent: the user sends it (or not) by
+            // hand, so there is no generation to watch.
+            set_status(&app, &d.record_id, "draft");
+            return;
+        }
         set_status(&app, &d.record_id, "injected");
         watch_generation(&app, &d.target, &d.record_id);
     });
 }
 
+/// The "send automatically" setting (on by default).
+fn auto_submit(app: &AppHandle) -> bool {
+    app.try_state::<crate::app_settings::AppSettingsStore>()
+        .map(|s| s.get().auto_submit)
+        .unwrap_or(true)
+}
+
 /// Poll page readiness at a modest rate for a bounded time; the first
 /// successful injection ends the loop. Request id makes retries idempotent.
 fn inject_text(app: &AppHandle, t: &Target, request_id: &str, text: &str) -> bool {
-    let payload = serde_json::json!({ "requestId": request_id, "kind": "text", "text": text, "submit": true });
+    let submit = auto_submit(app);
+    let payload = serde_json::json!({ "requestId": request_id, "kind": "text", "text": text, "submit": submit });
     retry_until(t, Duration::from_secs(25), || {
         let r: Option<InjectResult> = call(app, &t.label, "inject", &[payload.clone()]);
         match r.map(|r| r.status).as_deref() {

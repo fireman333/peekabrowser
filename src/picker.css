@@ -1,87 +1,74 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-:root {
-  color-scheme: light dark;
-  --card: rgba(246, 246, 248, 0.98);
-  --text: #1d1d1f;
-  --muted: #6e6e73;
-  --hover: rgba(10, 132, 255, 0.14);
-  --press: rgba(10, 132, 255, 0.26);
-  --border: rgba(0, 0, 0, 0.12);
-  --focus: rgba(10, 132, 255, 0.55);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --card: rgba(30, 30, 32, 0.98);
-    --text: #f2f2f7;
-    --muted: #98989d;
-    --hover: rgba(10, 132, 255, 0.22);
-    --press: rgba(10, 132, 255, 0.36);
-    --border: rgba(255, 255, 255, 0.12);
-  }
-}
-
 html, body {
   height: 100%;
   background: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font);
   overflow: hidden;
-  color: var(--text);
+  color: var(--ink1);
 }
 
+/* iPad "search options menu": a glass sheet of 52pt destination rows. */
 #picker-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--line-hair);
+  border-radius: var(--r-container);
   overflow: hidden;
-  padding: 6px;
+  padding: var(--s3);
   height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
-/* Native material provides the surface; keep a light tint for legibility. */
+/* Native material provides the surface; keep it clean. */
 :root[data-material] #picker-card {
   background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  /* The window itself is rounded (16pt) and edged by the material; a CSS
+     hairline here drew a second, mismatched outline inside it. */
+  border: none;
+  border-radius: 0;
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root[data-material] #picker-card { background: var(--card); }
+  :root[data-material] #picker-card { background: var(--solid-chrome); }
 }
 
 #picker-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--fs-footnote);
   font-weight: 600;
-  color: var(--muted);
-  padding: 4px 6px 4px 10px;
+  color: var(--ink2);
+  padding: var(--s1) var(--s1) var(--s2) var(--s3);
 }
 
 #picker-close {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--ink2);
   cursor: pointer;
-  padding: 2px;
-  border-radius: 4px;
+  padding: var(--s1);
+  border-radius: var(--r-small);
   line-height: 0;
 }
 
-#picker-close:hover { color: var(--text); background: var(--hover); }
+#picker-close:hover { color: var(--ink1); background: var(--fill-hover); }
 
 #picker-preview:empty { display: none; }
 
 #picker-preview {
-  margin: 0 4px 6px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: rgba(127, 127, 127, 0.12);
-  font-size: 11px;
+  margin: 0 var(--s1) var(--s2);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-small);
+  background: var(--bg-sunken);
+  font-size: var(--fs-footnote);
   line-height: 1.4;
-  color: var(--muted);
+  color: var(--ink2);
   max-height: 78px;
   overflow: hidden;
 }
@@ -99,14 +86,14 @@ html, body {
   max-width: 100%;
   max-height: 64px;
   margin: 0 auto;
-  border-radius: 4px;
+  border-radius: var(--s1);
   object-fit: contain;
 }
 
 #picker-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--row-gap);
   overflow-y: auto;
   flex: 1;
 }
@@ -114,47 +101,118 @@ html, body {
 .picker-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s3);
   width: 100%;
+  min-height: 52px;
+  flex-shrink: 0;
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--ink1);
   cursor: pointer;
-  padding: 7px 8px;
-  border-radius: 10px;
-  font-size: 13px;
+  padding: 0 var(--s3);
+  border-radius: var(--r-inner);
+  font: inherit;
+  font-size: var(--fs-body);
   text-align: left;
+  transition: background var(--t-quick) var(--ease-smooth);
 }
 
-.picker-btn:hover { background: var(--hover); }
-.picker-btn:active { background: var(--press); }
+.picker-btn:hover,
+.picker-btn:focus-visible { background: var(--tide-soft); }
+.picker-btn:active { background: var(--tide-soft); filter: brightness(0.96); }
 .picker-btn:focus { outline: none; }
-.picker-btn:focus-visible { outline: 2px solid var(--focus); }
+.picker-btn:focus-visible { outline: 2px solid var(--tide); outline-offset: -2px; }
+/* Keyboard selection (↑↓): same look as a focused row. */
+.picker-btn.kb-selected,
+.picker-prompt.kb-selected { background: var(--tide-soft); outline: 2px solid var(--tide); outline-offset: -2px; }
+
+/* Rows that have prompts: a small chevron that turns down while expanded. */
+.picker-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 10px;
+  height: 16px;
+  /* Sit close to the keycap: the row gap is wide for a 248pt window. */
+  margin-right: calc(4px - var(--s3));
+  color: var(--ink3);
+  transition: transform var(--t-quick) var(--ease-smooth);
+}
+
+.picker-btn[aria-expanded="true"] .picker-badge { transform: rotate(90deg); color: var(--tide); }
+
+/* A destination's prompts, inline under it as indented capsules (iOS). */
+.picker-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 4px 24px;
+  flex-shrink: 0;
+}
+
+.picker-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  width: 100%;
+  padding: 0 14px;
+  border: 1px solid var(--line-hair);
+  border-radius: 999px;
+  background: var(--fill-hover);
+  color: var(--ink1);
+  font: inherit;
+  font-size: var(--fs-callout);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-quick) var(--ease-smooth);
+}
+
+.picker-prompt:hover,
+.picker-prompt:focus-visible { background: var(--tide-soft); }
+.picker-prompt:focus { outline: none; }
+.picker-prompt-icon { display: inline-flex; color: var(--tide); flex-shrink: 0; }
+.picker-prompt-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .picker-icon {
-  width: 24px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   justify-content: center;
   align-items: center;
   flex-shrink: 0;
-  font-size: 18px;
+  font-size: 20px;
 }
 
-.picker-icon img { border-radius: 4px; }
+.picker-icon img { border-radius: 6px; }
 
-.picker-name { font-weight: 500; flex: 1; }
+.picker-name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.picker-default {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--tide);
+  white-space: nowrap;
+}
 
 .picker-key {
-  font: 10px ui-monospace, monospace;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 4px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font: 600 var(--fs-footnote)/1 var(--font);
+  color: var(--ink2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-keycap);
+  background: var(--bg-surface);
 }
 
 #picker-hint {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--fs-micro);
+  color: var(--ink3);
   text-align: center;
-  padding: 4px 0 1px;
+  padding: var(--s2) 0 var(--s1);
 }

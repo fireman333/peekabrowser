@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-run-ocr"
+description = "Enables the run_ocr command without any pre-configured scope."
+commands.allow = ["run_ocr"]
+
+[[permission]]
+identifier = "deny-run-ocr"
+description = "Denies the run_ocr command without any pre-configured scope."
+commands.deny = ["run_ocr"]

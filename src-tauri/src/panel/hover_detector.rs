@@ -214,6 +214,11 @@ fn on_cursor(app: &AppHandle, cx: f64, cy: f64) {
     }
     NEAR_EDGE.store(false, Ordering::SeqCst);
 
+    // ── Resize grip: only shown while the cursor is near the corner ──
+    if visible {
+        super::note_cursor_for_grip(app, cx, cy);
+    }
+
     // ── Auto-hide ──
     if !visible || PINNED.load(Ordering::Relaxed) {
         return;

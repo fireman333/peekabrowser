@@ -134,6 +134,9 @@ pub fn remove_destination(
     id: String,
 ) {
     dest_manager.remove(&id);
+    if let Some(store) = app.try_state::<crate::prompts::PromptStore>() {
+        store.update(|d| d.remove_destination(&id));
+    }
     let _ = tab_manager;
     crate::lifecycle::remove_pages_for_dest(&app, &id);
 
@@ -169,7 +172,8 @@ pub fn switch_destination(
     crate::lifecycle::switch_destination(&app, &dest)
 }
 
-/// Open a new tab for the given destination (always creates a new page).
+/// Open a new tab for the given destination (＋ / ⌘T / ⌘N). Refused once the
+/// destination has `MAX_PAGES_PER_DEST` tabs.
 #[tauri::command]
 pub fn new_tab(
     app: AppHandle,
@@ -179,10 +183,11 @@ pub fn new_tab(
     let dest = dest_manager
         .get_by_id(&id)
         .ok_or_else(|| format!("Destination '{}' not found", id))?;
-    crate::lifecycle::open_new_page(&app, &dest).map(|_| ())
+    crate::lifecycle::open_manual_tab(&app, &dest).map(|_| ())
 }
 
-/// Open a new tab for the currently active destination (called from page viewer's Cmd+N).
+/// Open a new tab for the selected destination (page viewer's ⌘T / ⌘N, and the
+/// empty state's New tab button).
 #[tauri::command]
 pub fn new_tab_for_active(
     app: AppHandle,
@@ -191,8 +196,7 @@ pub fn new_tab_for_active(
 ) -> Result<(), String> {
     let dest_id = {
         let mgr = tab_manager.lock().map_err(|_| "Lock failed")?;
-        mgr.get_active_page()
-            .map(|p| p.dest_id.clone())
+        mgr.active_dest_id()
             .ok_or_else(|| tr("沒有開啟中的頁面", "No active page").to_string())?
     };
     new_tab(app, dest_manager, dest_id)
@@ -252,12 +256,20 @@ pub struct PickerData {
     text: String,
     /// Small preview for image payloads (data URL).
     image_preview: Option<String>,
+    /// Destination ID → its prompts (system destinations have none).
+    prompts: std::collections::HashMap<String, Vec<crate::prompts::QueryLens>>,
+}
+
+/// Calendar / Reminders destinations: prompts make no sense there.
+fn is_system_destination(dest: &Destination) -> bool {
+    dest.url.starts_with("system://") || dest.url.starts_with("https://system://")
 }
 
 #[tauri::command]
 pub fn get_picker_data(
     dest_manager: State<DestinationManager>,
     picker_state: State<PickerState>,
+    prompt_store: State<crate::prompts::PromptStore>,
 ) -> PickerData {
     let pending = picker_state.0.lock().map(|s| s.payload.clone()).unwrap_or(None);
     let (kind, text, image_preview) = match pending {
@@ -270,7 +282,15 @@ pub fn get_picker_data(
         }
         None => ("", String::new(), None),
     };
-    PickerData { destinations: dest_manager.get_all(), kind: kind.into(), text, image_preview }
+    let destinations = dest_manager.get_all();
+    let data = prompt_store.get();
+    let english = crate::i18n::is_english();
+    let prompts = destinations
+        .iter()
+        .filter(|d| !is_system_destination(d))
+        .map(|d| (d.id.clone(), data.prompts_for(&d.id, english)))
+        .collect();
+    PickerData { destinations, kind: kind.into(), text, image_preview, prompts }
 }
 
 /// Handle system:// destinations — store state and open config window
@@ -639,9 +659,10 @@ pub fn ocr_image(path: &std::path::Path) -> Result<String, String> {
 /// User picked a destination in the picker popup — always creates a NEW page.
 /// The payload comes from the pending query captured at trigger time; `text`
 /// is accepted for compatibility but a typed payload is preferred.
+/// `prompt_id` picks one of the destination's prompts to go first.
 #[tauri::command]
-pub fn pick_destination(app: AppHandle, id: String, text: Option<String>) -> Result<(), String> {
-    pick_destination_impl(&app, &id, text)
+pub fn pick_destination(app: AppHandle, id: String, text: Option<String>, prompt_id: Option<String>) -> Result<(), String> {
+    pick_destination_impl(&app, &id, text, prompt_id.as_deref())
 }
 
 /// Pick the n-th destination in picker order (keyboard shortcut / auto-send).
@@ -652,12 +673,63 @@ pub fn pick_destination_by_index(app: &AppHandle, index: usize) -> Result<(), St
         .get(index)
         .map(|d| d.id.clone())
         .ok_or("No destination at that position")?;
-    pick_destination_impl(app, &id, None)
+    pick_destination_impl(app, &id, None, None)
+}
+
+/// Send the pending payload (already stored in `PickerState`) according to
+/// the "Text from other apps" setting: last used / fixed / let me choose.
+/// Shared by ⌘C ⌘C and the three-finger lookup tap. Safe to call off the main thread.
+pub fn route_text_from_other_apps(app: &AppHandle) {
+    route_text_from_other_apps_with(app, false);
+}
+
+/// Like [`route_text_from_other_apps`]; `force_choose` always opens the picker
+/// (used when the text may not be what the user pointed at).
+pub fn route_text_from_other_apps_with(app: &AppHandle, force_choose: bool) {
+    let settings = app
+        .try_state::<crate::app_settings::AppSettingsStore>()
+        .map(|s| s.get())
+        .unwrap_or_default();
+    let dests = app.state::<DestinationManager>().get_all();
+    let exists = |id: &Option<String>| id.as_ref().filter(|i| dests.iter().any(|d| &d.id == *i)).cloned();
+    let target = match settings.text_from_other_apps.as_str() {
+        _ if force_choose => None,
+        "fixed" => exists(&settings.fixed_destination_id).or_else(|| dests.first().map(|d| d.id.clone())),
+        "last_used" => exists(&settings.last_used_destination_id),
+        _ => None,
+    };
+    let app2 = app.clone();
+    match target {
+        Some(id) => {
+            // Sent without the picker: confirm with a chip beside the pointer.
+            let cursor = crate::panel::get_cursor_topleft_pos();
+            let text = app
+                .try_state::<PickerState>()
+                .and_then(|s| s.0.lock().ok().and_then(|g| match &g.payload {
+                    Some(Payload::Text { text }) => Some(text.clone()),
+                    _ => None,
+                }))
+                .unwrap_or_default();
+            let dest = dests.iter().find(|d| d.id == id).cloned();
+            let _ = app.run_on_main_thread(move || match pick_destination_impl(&app2, &id, None, None) {
+                Ok(()) => {
+                    if let Some(dest) = dest {
+                        crate::panel::lookup_highlight::show_sent(&app2, cursor, &dest, &text);
+                    }
+                }
+                Err(e) => log::warn!("auto-send to {} failed: {}", id, e),
+            });
+        }
+        None => {
+            let (cx, cy) = crate::panel::get_cursor_topleft_pos();
+            let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
+        }
+    }
 }
 
 /// Shared by the picker click, its keyboard shortcuts and auto-send.
 /// Must run on the main thread (creates/positions windows).
-pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) -> Result<(), String> {
+pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>, prompt_id: Option<&str>) -> Result<(), String> {
     let app = app.clone();
     let id = id.to_string();
     let dest_manager = app.state::<DestinationManager>();
@@ -698,6 +770,25 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
 
     crate::panel::show_panel(&app);
 
+    // Chosen prompt (if any) + the destination's prompt prefix.
+    let lens_prompt = prompt_id
+        .and_then(|pid| {
+            let store = app.try_state::<crate::prompts::PromptStore>()?;
+            let list = store.get().prompts_for(&dest.id, crate::i18n::is_english());
+            list.into_iter().find(|l| l.id == pid).map(|l| l.prompt)
+        })
+        .unwrap_or_default();
+    let prefix = crate::prompts::compose(&lens_prompt, &dest.clip_prompt, "");
+
+    // Remember the choice for "Text from other apps → Last used".
+    if let Some(store) = app.try_state::<crate::app_settings::AppSettingsStore>() {
+        let mut s = store.get();
+        if s.last_used_destination_id.as_deref() != Some(dest.id.as_str()) {
+            s.last_used_destination_id = Some(dest.id.clone());
+            store.update(s);
+        }
+    }
+
     // Record what is being asked, where, and from which app.
     let record_id = app.try_state::<crate::records::RecordStore>().and_then(|store| {
         let (selection, attachment) = match &payload {
@@ -710,8 +801,8 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
             }
         };
         let prompt = match &payload {
-            Payload::Text { text } => format!("{}{}", dest.clip_prompt, text),
-            Payload::Image { .. } => dest.clip_prompt.clone(),
+            Payload::Text { text } => crate::prompts::compose(&lens_prompt, &dest.clip_prompt, text),
+            Payload::Image { .. } => prefix.clone(),
         };
         store
             .create_query(crate::records::NewQuery {
@@ -743,7 +834,7 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
     };
     crate::delivery::spawn(
         app.clone(),
-        Delivery { target, payload, prompt: dest.clip_prompt.clone(), record_id },
+        Delivery { target, payload, prompt: prefix, record_id },
     );
     Ok(())
 }
@@ -751,6 +842,116 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
 #[tauri::command]
 pub fn hide_picker_panel(app: AppHandle) {
     crate::panel::hide_picker(&app);
+}
+
+/// The picker grows by `extra` points below its base height while a
+/// destination's prompts are expanded (0 = back to the base height).
+#[tauri::command]
+pub fn resize_picker(app: AppHandle, extra: f64) {
+    crate::panel::resize_picker(&app, extra);
+}
+
+// ─── Prompts (per destination) and profession templates ────────────────────
+
+#[derive(Serialize)]
+pub struct PromptTemplateInfo {
+    id: String,
+    edited: bool,
+    prompts: Vec<crate::prompts::QueryLens>,
+}
+
+#[derive(Serialize)]
+pub struct PromptTemplates {
+    /// Selected template.
+    profession: String,
+    /// All seven, in fixed order.
+    templates: Vec<PromptTemplateInfo>,
+}
+
+fn prompt_templates(data: &crate::prompts::PromptData) -> PromptTemplates {
+    let english = crate::i18n::is_english();
+    PromptTemplates {
+        profession: data.profession().to_string(),
+        templates: crate::prompts::PROFESSIONS
+            .iter()
+            .map(|p| PromptTemplateInfo {
+                id: p.to_string(),
+                edited: data.is_template_edited(p),
+                prompts: data.template_prompts(p, english),
+            })
+            .collect(),
+    }
+}
+
+fn check_profession(p: &str) -> Result<&'static str, String> {
+    crate::prompts::PROFESSIONS.iter().copied().find(|x| *x == p).ok_or_else(|| format!("Unknown profession: {}", p))
+}
+
+#[tauri::command]
+pub fn get_prompt_templates(store: State<crate::prompts::PromptStore>) -> PromptTemplates {
+    prompt_templates(&store.get())
+}
+
+#[tauri::command]
+pub fn set_prompt_profession(store: State<crate::prompts::PromptStore>, profession: String) -> Result<PromptTemplates, String> {
+    let p = check_profession(&profession)?;
+    let english = crate::i18n::is_english();
+    store.update(|d| d.set_profession(p, english));
+    Ok(prompt_templates(&store.get()))
+}
+
+/// Replaces a template's prompts (add / edit / delete / reorder). New items
+/// come without an ID and get `<profession>.user.<uuid>`.
+#[tauri::command]
+pub fn set_template_prompts(
+    store: State<crate::prompts::PromptStore>,
+    profession: String,
+    prompts: Vec<crate::prompts::QueryLens>,
+) -> Result<PromptTemplates, String> {
+    let p = check_profession(&profession)?;
+    let english = crate::i18n::is_english();
+    store.update(|d| {
+        let before = d.template_prompts(p, english);
+        let list = crate::prompts::prepare_list(&before, prompts, || crate::prompts::new_template_prompt_id(p))?;
+        if list != before {
+            d.set_template(p, Some(list), english);
+        }
+        Ok::<(), String>(())
+    })?;
+    Ok(prompt_templates(&store.get()))
+}
+
+#[tauri::command]
+pub fn restore_template_prompts(store: State<crate::prompts::PromptStore>, profession: String) -> Result<PromptTemplates, String> {
+    let p = check_profession(&profession)?;
+    let english = crate::i18n::is_english();
+    store.update(|d| d.restore_template(p, english));
+    Ok(prompt_templates(&store.get()))
+}
+
+#[tauri::command]
+pub fn get_destination_prompts(store: State<crate::prompts::PromptStore>, destination_id: String) -> Vec<crate::prompts::QueryLens> {
+    store.get().prompts_for(&destination_id, crate::i18n::is_english())
+}
+
+/// Replaces a destination's prompts (add / edit / delete / reorder). New items
+/// come without an ID and get a plain UUID.
+#[tauri::command]
+pub fn set_destination_prompts(
+    store: State<crate::prompts::PromptStore>,
+    destination_id: String,
+    prompts: Vec<crate::prompts::QueryLens>,
+) -> Result<Vec<crate::prompts::QueryLens>, String> {
+    let english = crate::i18n::is_english();
+    store.update(|d| {
+        let before = d.prompts_for(&destination_id, english);
+        let list = crate::prompts::prepare_list(&before, prompts, || uuid::Uuid::new_v4().to_string())?;
+        if list != before {
+            d.set_prompts(&destination_id, list, english);
+        }
+        Ok::<(), String>(())
+    })?;
+    Ok(store.get().prompts_for(&destination_id, english))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -764,9 +965,25 @@ pub fn set_viewer_width(app: AppHandle, preset: String) {
         _ => (screen_width / 2.0, 0.70),
     };
     let viewer_width = (total_width - crate::panel::TAB_BAR_WIDTH).max(200.0);
+    crate::panel::set_width_preset(&preset);
+    crate::panel::set_top_ratio(None);
     crate::panel::set_viewer_width_value(viewer_width);
     crate::panel::set_height_ratio(height_ratio);
     crate::panel::resize_panels(&app, viewer_width);
+}
+
+/// Resize grip drag from grip.html: phase "start" | "move" | "end"; dx/dy are
+/// points moved since the drag began.
+#[tauri::command]
+pub fn resize_drag(app: AppHandle, phase: String, dx: f64, dy: f64) {
+    match phase.as_str() {
+        "start" => crate::panel::grip_drag_start(),
+        "move" => crate::panel::grip_drag_move(&app, dx, dy),
+        _ => {
+            crate::panel::grip_drag_move(&app, dx, dy);
+            crate::panel::grip_drag_end();
+        }
+    }
 }
 
 #[tauri::command]
@@ -779,8 +996,8 @@ pub fn open_settings_window(app: AppHandle) {
     }
 
     let (screen_w, screen_h) = crate::panel::get_primary_screen_size();
-    let win_w = 560.0_f64;
-    let win_h = 640.0_f64;
+    let win_w = 600.0_f64;
+    let win_h = 720.0_f64;
     let x = (screen_w - win_w) / 2.0;
     let y = (screen_h - win_h) / 2.0;
 
@@ -1102,6 +1319,8 @@ pub fn save_app_settings(
     store.update(settings);
     crate::panel::hover_detector::sync_monitors(&app);
     crate::lifecycle::ensure_maintenance(&app);
+    // Start/stop the three-finger lookup trigger to match the new setting.
+    crate::hotkeys::three_finger::sync(&app);
     let language = store.get().language;
     if language != old_language {
         apply_language(&app, &language);
@@ -1224,4 +1443,343 @@ pub fn open_release_page() -> Result<(), String> {
         .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", crate::updater::REPO));
     std::process::Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Open System Settings -> Trackpad (to turn off "Look up & data detectors").
+#[tauri::command]
+pub fn open_trackpad_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.Trackpad-Settings.extension")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// ─── Chrome / tab commands (top chrome window and tab row) ─────────────────
+
+#[derive(Serialize)]
+pub struct ChromeState {
+    /// Live URL of the active page ("" when none).
+    url: String,
+    /// The active page's slot is loading (page-load Started without Finished).
+    loading: bool,
+    /// Entries on the reopen-closed-tab stack.
+    closed_count: usize,
+    /// A manual new tab is allowed for the active destination.
+    can_new_tab: bool,
+    /// "short" | "medium" | "long"
+    width_preset: String,
+}
+
+#[tauri::command]
+pub fn get_chrome_state(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>) -> ChromeState {
+    let (url, label, closed_count, can_new_tab) = tab_manager
+        .lock()
+        .map(|m| {
+            let active = m.get_active_page();
+            (
+                active.map(|p| p.url.clone()).unwrap_or_default(),
+                active.and_then(|p| p.label.clone()),
+                m.closed_count(),
+                active.map(|p| m.can_open_manual(&p.dest_id)).unwrap_or(false),
+            )
+        })
+        .unwrap_or_default();
+    // Prefer the live URL (SPA navigations update it without a page load).
+    let live = label
+        .as_ref()
+        .and_then(|l| app.get_webview_window(l))
+        .and_then(|w| w.url().ok())
+        .map(|u| u.to_string())
+        .filter(|u| u != "about:blank");
+    ChromeState {
+        url: live.unwrap_or(url),
+        loading: label.as_deref().map(crate::panel::is_slot_loading).unwrap_or(false),
+        closed_count,
+        can_new_tab,
+        width_preset: crate::panel::width_preset().to_string(),
+    }
+}
+
+/// Whether a typed host (with optional port / path) is this machine or the
+/// local network: localhost, *.localhost, loopback, private and link-local IPs.
+/// Such hosts usually run plain-HTTP dev servers.
+fn is_local_host(t: &str) -> bool {
+    let authority = t.split(['/', '?', '#']).next().unwrap_or("");
+    if let Some(rest) = authority.strip_prefix('[') {
+        // [IPv6]:port
+        let ip = rest.split(']').next().unwrap_or("");
+        return ip.parse::<std::net::Ipv6Addr>().map(|a| a.is_loopback()).unwrap_or(false);
+    }
+    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority).to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    host.parse::<std::net::Ipv4Addr>()
+        .map(|a| a.is_loopback() || a.is_private() || a.is_link_local())
+        .unwrap_or(false)
+}
+
+/// Turn address-bar input into a URL: a URL as typed, a bare host with
+/// https:// (http:// for localhost and private addresses), anything else a
+/// Google search.
+fn address_to_url(input: &str) -> Option<String> {
+    let t = input.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Ok(u) = url::Url::parse(t) {
+        if matches!(u.scheme(), "http" | "https") {
+            return Some(u.to_string());
+        }
+    }
+    let looks_like_host = !t.contains(char::is_whitespace)
+        && (t.contains('.') || t.starts_with("localhost") || t.starts_with('['))
+        && !t.starts_with('.')
+        && !t.ends_with('.');
+    if looks_like_host {
+        let scheme = if is_local_host(t) { "http" } else { "https" };
+        if let Ok(u) = url::Url::parse(&format!("{}://{}", scheme, t)) {
+            return Some(u.to_string());
+        }
+    }
+    let mut u = url::Url::parse("https://www.google.com/search").ok()?;
+    u.query_pairs_mut().append_pair("q", t);
+    Some(u.to_string())
+}
+
+/// Address bar Enter: navigate the active page.
+#[tauri::command]
+pub fn chrome_navigate(app: AppHandle, input: String) -> Result<(), String> {
+    let url = address_to_url(&input).ok_or(tr("請輸入網址或關鍵字", "Type a URL or search words"))?;
+    crate::panel::navigate_active_viewer(&app, &url).map_err(|e| e.to_string())?;
+    if let Some(label) = crate::panel::get_active_page_label() {
+        crate::lifecycle::watch_navigation(&app, &label, &url);
+    }
+    Ok(())
+}
+
+/// Pointer entered the chrome: pick up SPA URL/title changes.
+#[tauri::command]
+pub fn refresh_chrome(app: AppHandle) {
+    crate::lifecycle::refresh_active_meta(&app);
+}
+
+#[tauri::command]
+pub fn reopen_closed_tab(app: AppHandle) -> Result<(), String> {
+    crate::lifecycle::reopen_closed(&app)
+}
+
+#[tauri::command]
+pub fn close_other_tabs(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) {
+    let ids = tab_manager.lock().map(|m| m.sibling_ids(&page_id, false)).unwrap_or_default();
+    // Keep the clicked tab: show it first so closing the others can't move the selection elsewhere.
+    let _ = crate::lifecycle::activate_page(&app, &page_id);
+    crate::lifecycle::close_pages(&app, &ids);
+}
+
+#[tauri::command]
+pub fn close_tabs_to_right(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) {
+    let ids = tab_manager.lock().map(|m| m.sibling_ids(&page_id, true)).unwrap_or_default();
+    crate::lifecycle::close_pages(&app, &ids);
+}
+
+/// ⌘⇧[ (delta -1) / ⌘⇧] (delta 1).
+#[tauri::command]
+pub fn cycle_tab(app: AppHandle, delta: i32) -> Result<(), String> {
+    crate::lifecycle::cycle_tab(&app, delta.signum())
+}
+
+/// URL of a page (live URL when it is loaded), or of the active page.
+fn page_url(app: &AppHandle, page_id: Option<&str>) -> Option<String> {
+    let m = app.state::<Mutex<WebViewTabManager>>();
+    let (url, label) = {
+        let m = m.lock().ok()?;
+        let p = match page_id {
+            Some(id) => m.get_page(id)?,
+            None => m.get_active_page()?,
+        };
+        (p.url.clone(), p.label.clone())
+    };
+    let live = label
+        .and_then(|l| app.get_webview_window(&l))
+        .and_then(|w| w.url().ok())
+        .map(|u| u.to_string())
+        .filter(|u| u != "about:blank");
+    Some(live.unwrap_or(url)).filter(|u| !u.is_empty())
+}
+
+#[tauri::command]
+pub fn copy_page_url(app: AppHandle, page_id: Option<String>) -> Result<(), String> {
+    let url = page_url(&app, page_id.as_deref()).ok_or(tr("沒有開啟中的頁面", "No active page"))?;
+    crate::delivery::copy_to_clipboard(&app, &url);
+    crate::lifecycle::notify(&app, tr("已複製網址", "URL copied"));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_page_in_browser(app: AppHandle, page_id: Option<String>) -> Result<(), String> {
+    let url = page_url(&app, page_id.as_deref()).ok_or(tr("沒有開啟中的頁面", "No active page"))?;
+    std::process::Command::new("open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Reload a tab: a loaded one in place; an unloaded one is shown (which loads it).
+#[tauri::command]
+pub fn reload_page(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) -> Result<(), String> {
+    let label = tab_manager.lock().map_err(|_| "lock")?.get_page(&page_id).map(|p| p.label.clone()).ok_or(tr("找不到這個分頁", "Tab not found"))?;
+    match label.and_then(|l| app.get_webview_window(&l)) {
+        Some(w) => w.eval("location.reload()").map_err(|e| e.to_string()),
+        None => crate::lifecycle::activate_page(&app, &page_id),
+    }
+}
+
+/// Keeps the last popped-up native menu alive until the next one.
+static CHROME_MENU: Mutex<Option<tauri::menu::Menu<tauri::Wry>>> = Mutex::new(None);
+
+fn popup(app: &AppHandle, menu: tauri::menu::Menu<tauri::Wry>, at: Option<(f64, f64)>) -> Result<(), String> {
+    let w = app.get_webview_window(crate::panel::CHROME_LABEL).ok_or(tr("網址列視窗不見了", "The address bar window is missing"))?;
+    match at {
+        Some((x, y)) => w.popup_menu_at(&menu, tauri::LogicalPosition::new(x, y)),
+        None => w.popup_menu(&menu),
+    }
+    .map_err(|e| e.to_string())?;
+    if let Ok(mut g) = CHROME_MENU.lock() {
+        *g = Some(menu);
+    }
+    Ok(())
+}
+
+/// The ⋯ menu: capture, width S/M/L, reopen closed tab, copy URL, close tab.
+#[tauri::command]
+pub fn show_chrome_menu(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, x: f64, y: f64) -> Result<(), String> {
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let closed = tab_manager.lock().map(|m| m.closed_count()).unwrap_or(0);
+    let has_page = crate::panel::get_active_page_label().is_some();
+    let preset = crate::panel::width_preset();
+    let e = |e: tauri::Error| e.to_string();
+    let capture = MenuItem::with_id(&app, "chrome:capture", tr("截圖傳給 AI", "Screenshot to AI"), true, Some("CmdOrCtrl+Shift+S")).map_err(e)?;
+    let sep1 = PredefinedMenuItem::separator(&app).map_err(e)?;
+    let narrow = CheckMenuItem::with_id(&app, "chrome:width:short", tr("窄", "Narrow"), true, preset == "short", None::<&str>).map_err(e)?;
+    let medium = CheckMenuItem::with_id(&app, "chrome:width:medium", tr("中", "Medium"), true, preset == "medium", None::<&str>).map_err(e)?;
+    let wide = CheckMenuItem::with_id(&app, "chrome:width:long", tr("寬", "Wide"), true, preset == "long", None::<&str>).map_err(e)?;
+    let width = Submenu::with_items(&app, tr("面板寬度", "Panel width"), true, &[&narrow, &medium, &wide]).map_err(e)?;
+    let sep2 = PredefinedMenuItem::separator(&app).map_err(e)?;
+    let reopen = MenuItem::with_id(&app, "chrome:reopen", tr("重新開啟關閉的分頁", "Reopen closed tab"), closed > 0, Some("CmdOrCtrl+Shift+T")).map_err(e)?;
+    let copy = MenuItem::with_id(&app, "chrome:copy-url", tr("複製網址", "Copy URL"), has_page, None::<&str>).map_err(e)?;
+    let close = MenuItem::with_id(&app, "chrome:close-tab", tr("關閉分頁", "Close tab"), has_page, Some("CmdOrCtrl+W")).map_err(e)?;
+    let menu = Menu::with_items(&app, &[&capture, &sep1, &width, &sep2, &reopen, &copy, &close]).map_err(e)?;
+    popup(&app, menu, Some((x, y)))
+}
+
+/// Right-click menu of a tab chip.
+#[tauri::command]
+pub fn show_tab_menu(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, page_id: String) -> Result<(), String> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let (can_close, has_others, has_right) = tab_manager
+        .lock()
+        .map(|m| {
+            (
+                m.get_page(&page_id).is_some(),
+                !m.sibling_ids(&page_id, false).is_empty(),
+                !m.sibling_ids(&page_id, true).is_empty(),
+            )
+        })
+        .map_err(|_| "lock")?;
+    let e = |e: tauri::Error| e.to_string();
+    let id = |a: &str| format!("chrome:tab:{}:{}", a, page_id);
+    let close = MenuItem::with_id(&app, id("close"), tr("關閉分頁", "Close"), can_close, None::<&str>).map_err(e)?;
+    let others = MenuItem::with_id(&app, id("close-others"), tr("關閉其他分頁", "Close others"), has_others, None::<&str>).map_err(e)?;
+    let right = MenuItem::with_id(&app, id("close-right"), tr("關閉右側分頁", "Close to the right"), has_right, None::<&str>).map_err(e)?;
+    let sep = PredefinedMenuItem::separator(&app).map_err(e)?;
+    let copy = MenuItem::with_id(&app, id("copy-url"), tr("複製網址", "Copy URL"), true, None::<&str>).map_err(e)?;
+    let open = MenuItem::with_id(&app, id("open-browser"), tr("在預設瀏覽器開啟", "Open in default browser"), true, None::<&str>).map_err(e)?;
+    let reload = MenuItem::with_id(&app, id("reload"), tr("重新載入", "Reload"), true, None::<&str>).map_err(e)?;
+    let menu = Menu::with_items(&app, &[&close, &others, &right, &sep, &copy, &open, &reload]).map_err(e)?;
+    popup(&app, menu, None)
+}
+
+/// Handle a click in the chrome's native menus (ids prefixed "chrome:").
+pub fn handle_chrome_menu(app: &AppHandle, id: &str) {
+    let Some(rest) = id.strip_prefix("chrome:") else { return };
+    let mgr = app.state::<Mutex<WebViewTabManager>>();
+    match rest {
+        "capture" => take_screenshot(app.clone()),
+        "reopen" => {
+            let _ = crate::lifecycle::reopen_closed(app);
+        }
+        "copy-url" => {
+            let _ = copy_page_url(app.clone(), None);
+        }
+        "close-tab" => {
+            let id = mgr.lock().ok().and_then(|m| m.active_page_id.clone());
+            if let Some(id) = id {
+                crate::lifecycle::close_page(app, &id);
+            }
+        }
+        _ if rest.starts_with("width:") => {
+            set_viewer_width(app.clone(), rest["width:".len()..].to_string());
+            let _ = app.emit_to(crate::panel::CHROME_LABEL, "chrome-state-changed", ());
+        }
+        _ if rest.starts_with("tab:") => {
+            let mut parts = rest["tab:".len()..].splitn(2, ':');
+            let (Some(action), Some(page_id)) = (parts.next(), parts.next()) else { return };
+            let page_id = page_id.to_string();
+            match action {
+                "close" => crate::lifecycle::close_page(app, &page_id),
+                "close-others" => close_other_tabs(app.clone(), mgr, page_id),
+                "close-right" => close_tabs_to_right(app.clone(), mgr, page_id),
+                "copy-url" => {
+                    let _ = copy_page_url(app.clone(), Some(page_id));
+                }
+                "open-browser" => {
+                    let _ = open_page_in_browser(app.clone(), Some(page_id));
+                }
+                "reload" => {
+                    let _ = reload_page(app.clone(), mgr, page_id);
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    // The native menu may have extended past the panel's edge, leaving the
+    // cursor outside it: restart the auto-hide grace period.
+    crate::panel::hover_detector::note_shown();
+}
+
+#[cfg(test)]
+mod chrome_tests {
+    use super::address_to_url;
+
+    #[test]
+    fn address_input_becomes_url_or_search() {
+        assert_eq!(address_to_url("https://claude.ai/new").as_deref(), Some("https://claude.ai/new"));
+        assert_eq!(address_to_url("example.com/a").as_deref(), Some("https://example.com/a"));
+        assert!(address_to_url("heart failure gdmt").unwrap().starts_with("https://www.google.com/search?q=heart+failure"));
+        assert!(address_to_url("javascript:alert(1)").unwrap().starts_with("https://www.google.com/search?q="));
+        assert_eq!(address_to_url("   "), None);
+    }
+
+    #[test]
+    fn local_hosts_get_http() {
+        assert_eq!(address_to_url("localhost:3000").as_deref(), Some("http://localhost:3000/"));
+        assert_eq!(address_to_url("localhost").as_deref(), Some("http://localhost/"));
+        assert_eq!(address_to_url("app.localhost:5173/x").as_deref(), Some("http://app.localhost:5173/x"));
+        assert_eq!(address_to_url("127.0.0.1:8080/api").as_deref(), Some("http://127.0.0.1:8080/api"));
+        assert_eq!(address_to_url("192.168.1.10").as_deref(), Some("http://192.168.1.10/"));
+        assert_eq!(address_to_url("10.0.0.5:5173").as_deref(), Some("http://10.0.0.5:5173/"));
+        assert_eq!(address_to_url("172.20.1.1").as_deref(), Some("http://172.20.1.1/"));
+        assert_eq!(address_to_url("[::1]:3000").as_deref(), Some("http://[::1]:3000/"));
+        // Public addresses and names keep https.
+        assert_eq!(address_to_url("172.32.0.1").as_deref(), Some("https://172.32.0.1/"));
+        assert_eq!(address_to_url("8.8.8.8").as_deref(), Some("https://8.8.8.8/"));
+        assert_eq!(address_to_url("example.com:8443").as_deref(), Some("https://example.com:8443/"));
+        assert_eq!(address_to_url("localhost.example.com").as_deref(), Some("https://localhost.example.com/"));
+        // An explicit scheme is kept as typed.
+        assert_eq!(address_to_url("https://localhost:3000").as_deref(), Some("https://localhost:3000/"));
+    }
 }

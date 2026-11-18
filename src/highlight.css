@@ -1,0 +1,103 @@
+/* "Sent" chip: a capsule in the picker's look (glass sheet, hairline,
+   22pt destination icon, body-size name) that pops in beside the pointer,
+   holds briefly and fades (~1.4 s). Shown only when captured text went
+   straight to a destination without the picker. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: var(--font);
+  color: var(--ink1);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#chip {
+  position: absolute;
+  left: 16px;
+  top: 12px;
+  max-width: 328px;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 0 var(--s4, 16px) 0 var(--s3);
+  border-radius: 26px;
+  /* No native material behind this window: use the solid chrome tone, nearly
+     opaque, so it reads on any page. */
+  background: rgba(var(--solid-chrome-rgb), 0.94);
+  border: 1px solid var(--line-hair);
+  box-shadow: var(--shadow-float);
+  opacity: 0;
+}
+
+body.right #chip {
+  left: auto;
+  right: 16px;
+}
+
+.chip-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 20px;
+}
+
+.chip-icon img { border-radius: 6px; }
+
+.chip-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.chip-name {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-snippet {
+  font-size: var(--fs-footnote);
+  color: var(--ink2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-snippet:empty { display: none; }
+
+.chip-check {
+  flex-shrink: 0;
+  margin-left: var(--s1);
+  color: var(--tide);
+  font-weight: 700;
+  font-size: var(--fs-body);
+}
+
+#chip.play {
+  animation: chip-life 1.4s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+
+@keyframes chip-life {
+  0%   { opacity: 0; transform: translateY(6px) scale(0.96); }
+  13%  { opacity: 1; transform: none; }
+  80%  { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes chip-life {
+    0%, 100% { opacity: 0; }
+    10%, 80% { opacity: 1; }
+  }
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-switch-page"
+description = "Enables the switch_page command without any pre-configured scope."
+commands.allow = ["switch_page"]
+
+[[permission]]
+identifier = "deny-switch-page"
+description = "Denies the switch_page command without any pre-configured scope."
+commands.deny = ["switch_page"]

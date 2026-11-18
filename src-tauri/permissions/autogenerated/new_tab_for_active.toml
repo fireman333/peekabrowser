@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-new-tab-for-active"
+description = "Enables the new_tab_for_active command without any pre-configured scope."
+commands.allow = ["new_tab_for_active"]
+
+[[permission]]
+identifier = "deny-new-tab-for-active"
+description = "Denies the new_tab_for_active command without any pre-configured scope."
+commands.deny = ["new_tab_for_active"]

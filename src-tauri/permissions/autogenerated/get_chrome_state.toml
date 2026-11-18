@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-chrome-state"
+description = "Enables the get_chrome_state command without any pre-configured scope."
+commands.allow = ["get_chrome_state"]
+
+[[permission]]
+identifier = "deny-get-chrome-state"
+description = "Denies the get_chrome_state command without any pre-configured scope."
+commands.deny = ["get_chrome_state"]

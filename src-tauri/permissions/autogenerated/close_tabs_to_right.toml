@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-tabs-to-right"
+description = "Enables the close_tabs_to_right command without any pre-configured scope."
+commands.allow = ["close_tabs_to_right"]
+
+[[permission]]
+identifier = "deny-close-tabs-to-right"
+description = "Denies the close_tabs_to_right command without any pre-configured scope."
+commands.deny = ["close_tabs_to_right"]

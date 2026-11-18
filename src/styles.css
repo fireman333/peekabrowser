@@ -1,4 +1,8 @@
-/* Peekabrowser sidebar */
+/* Peekabrowser rail (sidebar window) — iPad "medium" rail: 70 wide, items
+   62×58 inset 4 (spec §5.1). The first item starts 8px down so its top edge
+   and its icon's centre line match the address capsule in the chrome bar
+   (8px margin, 44px row). */
+@import "./theme.css";
 
 * {
   box-sizing: border-box;
@@ -6,43 +10,10 @@
   padding: 0;
 }
 
-/* Theme tokens: follow the system appearance. */
 :root {
-  color-scheme: light dark;
-  --tab-bar-width: 56px;
-  --bg: #f4f4f6;
-  --bg-hover: rgba(0, 0, 0, 0.06);
-  --bg-active: rgba(0, 0, 0, 0.1);
-  --text-primary: #1d1d1f;
-  --text-muted: #6e6e73;
-  --accent: #0a84ff;
-  --accent-text: #fff;
-  --ok: #248a3d;
-  --danger: #d70015;
-  --border: rgba(0, 0, 0, 0.1);
-  --focus: rgba(10, 132, 255, 0.55);
-  --radius: 10px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1c1c1e;
-    --bg-hover: rgba(255, 255, 255, 0.08);
-    --bg-active: rgba(255, 255, 255, 0.14);
-    --text-primary: #f2f2f7;
-    --text-muted: #98989d;
-    --accent: #0a84ff;
-    --ok: #30d158;
-    --danger: #ff453a;
-    --border: rgba(255, 255, 255, 0.1);
-  }
-}
-
-@media (prefers-contrast: more) {
-  :root {
-    --text-muted: currentColor;
-    --border: rgba(127, 127, 127, 0.8);
-  }
+  --rail-width: 70px; /* = TAB_BAR_WIDTH in panel/mod.rs */
+  --rail-inset: 4px;
+  --focus: color-mix(in srgb, var(--tide) 60%, transparent);
 }
 
 html, body {
@@ -50,42 +21,45 @@ html, body {
   width: 100%;
   overflow: hidden;
   background: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font);
   font-size: 13px;
-  color: var(--text-primary);
+  color: var(--ink1);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #app {
   display: flex;
   height: 100vh;
   width: 100%;
-  background: var(--bg);
+  background: var(--glass-bg);
   overflow: hidden;
 }
 
 /* Native material (Liquid Glass / vibrancy) is behind the web view: don't
-   paint over it. Content windows (pages, records) keep solid backgrounds. */
+   paint over it. */
 :root[data-material] #app {
   background: transparent;
 }
 
 @media (prefers-reduced-transparency: reduce) {
   :root[data-material] #app {
-    background: var(--bg);
+    background: var(--solid-chrome);
   }
 }
 
-/* ─── Tab Bar ─────────────────────────────────────────── */
-#tab-bar {
-  width: var(--tab-bar-width);
-  min-width: var(--tab-bar-width);
+/* ─── Rail ────────────────────────────────────────────── */
+#rail {
+  width: var(--rail-width);
+  min-width: var(--rail-width);
   height: 100%;
-  border-right: 1px solid var(--border);
+  /* Hairline as a shadow, not a border: a border would leave 69px and put
+     the 62px items on half pixels. */
+  box-shadow: inset -1px 0 0 var(--line-hair);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0 4px;
-  gap: 2px;
+  padding: var(--s1) 0 var(--s2);
   overflow: hidden;
 }
 
@@ -98,64 +72,244 @@ html, body {
   width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  scrollbar-width: thin;
-  padding-top: 2px;
+  scrollbar-width: none;
+  /* Rail 4 + list 4 = 8 (the chrome margin); the list's share keeps the
+     focus ring of the first item from being clipped. */
+  padding-top: var(--s1);
 }
 
-#tab-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
+#tab-list::-webkit-scrollbar {
+  display: none;
+}
+
+.rail-item {
+  position: relative;
   flex-shrink: 0;
-}
-
-.action-group {
+  width: 62px;
+  height: 58px;
+  border: none;
+  border-radius: var(--r-inner);
+  background: transparent;
+  color: var(--ink1);
+  font: inherit;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
-  width: 100%;
-  padding: 3px 0;
-  border-top: 1px solid var(--border);
+  justify-content: center;
+  transition: background var(--t-quick) var(--ease-smooth);
 }
 
-.tab-btn {
-  width: 38px;
-  height: 38px;
-  min-height: 38px;
-  border-radius: var(--radius);
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 18px;
+.rail-item:hover {
+  background: var(--fill-hover);
+}
+
+.rail-item.selected {
+  background: var(--fill-selected);
+  box-shadow: var(--shadow-selected);
+}
+
+/* Tide marker on the rail's leading edge (the item is inset 4px). */
+.rail-item.selected::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--rail-inset));
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  border-radius: 0 2px 2px 0;
+  background: var(--tide);
+}
+
+.rail-icon {
+  position: relative;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, color 0.15s;
-  position: relative;
   flex-shrink: 0;
 }
 
-.action-btn {
-  height: 30px;
-  min-height: 30px;
+.rail-icon > img,
+.rail-icon > .mono-tile,
+.rail-icon > svg {
+  width: 28px;
+  height: 28px;
 }
 
-.tab-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+.tab-favicon {
+  border-radius: 8px;
+  object-fit: contain;
 }
 
-.tab-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
+/* iPad-style site tile: the logo sits on a white rounded square. */
+.rail-icon > img.tab-favicon {
+  box-sizing: border-box;
+  padding: 4px;
+  background: #fff;
+  border-radius: 8px; /* 28 × 0.29 */
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12);
 }
 
-.tab-btn.active {
-  background: var(--bg-active);
-  color: var(--text-primary);
+.emoji-icon {
+  line-height: 1;
+}
+
+.mono-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.rail-name {
+  margin-top: 3px;
+  max-width: 58px;
+  height: 12px;
+  font-size: var(--fs-micro);
+  line-height: 12px;
+  color: var(--ink1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-item.selected .rail-name {
+  font-weight: 600;
+}
+
+/* Generating: a rotating 2px Ink2 ring (3/4 of a circle) around the icon. */
+.gen-ring {
+  display: none;
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--ink2);
+  border-top-color: transparent;
+  pointer-events: none;
+}
+
+.generating .gen-ring {
+  display: block;
+  animation: gen-spin 1.2s linear infinite;
+}
+
+@keyframes gen-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Finished but not seen yet: a 6px Ember dot. */
+.unseen-dot {
+  display: none;
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ember);
+  box-shadow: 0 0 0 1.5px var(--bg-surface);
+}
+
+.unseen .unseen-dot {
+  display: block;
+}
+
+/* Tab count in the item's top-right corner: up to three 4px dots, a number
+   badge from four tabs on. Out of flow, so icon + name stay centred. */
+.tab-indicator {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tab-indicator i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink3);
+}
+
+.count-badge {
+  min-width: 14px;
+  height: 12px;
+  padding: 0 3px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--line-hair);
+  color: var(--ink1);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 10px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-divider {
+  flex-shrink: 0;
+  width: 40px;
+  height: 1px;
+  background: var(--line-hair);
+  margin: 6px auto;
+}
+
+/* ─── Footer: Records / Pin / Settings ─────────────────── */
+#rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.foot-btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--r-small);
+  background: transparent;
+  color: var(--ink2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--t-quick), color var(--t-quick);
+}
+
+.foot-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.foot-btn:hover {
+  background: var(--fill-hover);
+  color: var(--ink1);
+}
+
+/* Pinned: Tide-tinted icon. */
+#pin-btn.pinned {
+  color: var(--tide);
+}
+
+#settings-btn.has-update::after {
+  content: "";
+  position: absolute;
+  right: 9px;
+  top: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--state-danger);
 }
 
 button:focus {
@@ -165,186 +319,6 @@ button:focus {
 button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
-}
-
-.tab-favicon {
-  border-radius: 5px;
-  object-fit: contain;
-}
-
-.emoji-icon {
-  font-size: 18px;
-  line-height: 1;
-}
-
-.dest-btn.active::before {
-  content: '';
-  position: absolute;
-  left: -8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 20px;
-  background: var(--accent);
-  border-radius: 0 2px 2px 0;
-}
-
-/* Static marker (no looping animation) for a destination that is generating. */
-.dest-btn.generating::after {
-  content: '';
-  position: absolute;
-  right: 3px;
-  top: 3px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 2px var(--bg);
-}
-
-.system-separator {
-  width: 24px;
-  height: 1px;
-  background: var(--border);
-  margin: 6px auto;
-}
-
-/* ─── Page dots ─── */
-.page-group {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 3px;
-  width: 100%;
-  padding: 0 4px 4px;
-}
-
-.page-dot-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-.page-dot {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  flex-shrink: 0;
-}
-
-.page-dot:hover {
-  background: var(--bg-active);
-  color: var(--text-primary);
-}
-
-.page-dot.active {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: var(--accent);
-}
-
-.page-dot.generating {
-  border: 2px solid var(--accent);
-}
-
-.page-dot.unloaded {
-  border-style: dashed;
-  background: transparent;
-  opacity: 0.6;
-}
-
-.page-close-btn {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: none;
-  background: var(--text-muted);
-  color: var(--bg);
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  z-index: 10;
-}
-
-.page-dot-wrap:hover .page-close-btn {
-  display: flex;
-}
-
-.page-close-btn:hover {
-  background: var(--danger);
-  color: #fff;
-}
-
-#settings-btn.has-update::after {
-  content: '';
-  position: absolute;
-  right: 7px;
-  top: 5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--danger);
-}
-
-#pin-btn.pinned {
-  color: #d97706;
-  background: rgba(251, 191, 36, 0.18);
-}
-
-.flash-ok {
-  color: var(--ok) !important;
-  background: color-mix(in srgb, var(--ok) 15%, transparent) !important;
-}
-
-.flash-error {
-  color: var(--danger) !important;
-  background: color-mix(in srgb, var(--danger) 15%, transparent) !important;
-}
-
-#width-controls {
-  display: flex;
-  gap: 1px;
-  padding: 2px 4px 0;
-  width: 100%;
-}
-
-.width-btn {
-  flex: 1;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 600;
-  transition: background 0.15s, color 0.15s;
-}
-
-.width-btn:hover {
-  background: var(--bg-active);
-  color: var(--text-primary);
-}
-
-.width-btn.active {
-  background: var(--accent);
-  color: var(--accent-text);
 }
 
 /* ─── Utilities ───────────────────────────────────────── */
@@ -365,22 +339,8 @@ button:focus-visible {
   * {
     transition: none !important;
   }
-}
-
-/* ─── Scrollbar ───────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 3px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-#tab-list::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 2px;
-}
-
-#tab-list:hover::-webkit-scrollbar-thumb {
-  background: var(--border);
+  /* A still 3/4 ring instead of a spinning one. */
+  .generating .gen-ring {
+    animation: none;
+  }
 }

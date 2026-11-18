@@ -5,182 +5,291 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light dark" />
   <title>Peekabrowser</title>
+  <link rel="stylesheet" href="/src/theme.css" />
   <link rel="stylesheet" href="/src/settings.css" />
   <script type="module" src="/src/settings.ts" defer></script>
 </head>
 <body>
   <div id="settings-app">
-    <h1 data-i18n="settings.title"></h1>
 
-    <!-- Destinations -->
-    <section class="group">
-      <h2 data-i18n="dest.section"></h2>
-      <p class="hint" data-i18n="dest.hint"></p>
-      <div id="destinations-list"></div>
-      <button id="add-btn" class="btn-secondary" data-i18n="dest.add"></button>
+    <!-- ─── Main page ─── -->
+    <div id="view-main">
+      <h1 data-i18n="settings.title"></h1>
 
-      <div id="add-form" class="card hidden">
-        <h3 id="form-title" data-i18n="dest.addTitle"></h3>
-        <div class="form-group">
-          <span class="field-label" data-i18n="dest.presets"></span>
-          <div id="preset-chips"></div>
+      <!-- Accessibility warning (only when ⌘C ⌘C is off) -->
+      <section class="section hidden" id="copy-ax-row">
+        <div class="group">
+          <div class="row warn-row">
+            <span class="row-text">
+              <strong data-i18n="s.axTitle"></strong>
+              <small data-i18n="s.axHelp"></small>
+            </span>
+            <button id="copy-ax-open" class="btn-secondary" data-i18n="copy.axOpen"></button>
+          </div>
         </div>
-        <div class="form-group">
-          <label for="new-name" data-i18n="dest.name"></label>
-          <input id="new-name" type="text" data-i18n-placeholder="dest.namePh" />
+      </section>
+
+      <!-- 1. When you look something up -->
+      <section class="section">
+        <h2 data-i18n="s.sec.lookup"></h2>
+        <div class="group">
+          <div class="row">
+            <span class="row-label" data-i18n="s.fromApps"></span>
+            <div class="segmented" id="seg-mode" role="radiogroup" data-i18n-aria="s.fromApps">
+              <button type="button" role="radio" data-mode="last_used" data-i18n="s.mode.last"></button>
+              <button type="button" role="radio" data-mode="fixed" data-i18n="s.mode.fixed"></button>
+              <button type="button" role="radio" data-mode="choose" data-i18n="s.mode.choose"></button>
+            </div>
+          </div>
+          <div class="row hidden" id="fixed-row">
+            <label class="row-label" for="opt-fixed-dest" data-i18n="s.sendTo"></label>
+            <select id="opt-fixed-dest"></select>
+          </div>
         </div>
-        <div class="form-group">
-          <label for="new-url" data-i18n="dest.url"></label>
-          <input id="new-url" type="text" data-i18n-placeholder="dest.urlPh" />
+        <p class="footer" data-i18n="s.fromApps.foot"></p>
+
+        <div class="group">
+          <label class="row">
+            <span class="row-label" data-i18n="s.autoSubmit"></span>
+            <input type="checkbox" class="switch" id="opt-auto-submit" />
+          </label>
         </div>
-        <div class="form-group">
-          <label for="new-icon" data-i18n="dest.icon"></label>
-          <input id="new-icon" type="text" data-i18n-placeholder="dest.iconPh" maxlength="2" />
+        <p class="footer" data-i18n="s.autoSubmit.foot"></p>
+
+        <div class="group">
+          <button type="button" id="open-prompts" class="row row-button">
+            <span class="row-label" data-i18n="p.row"></span>
+            <span class="row-value" id="prompts-profession"></span>
+            <span class="chev" aria-hidden="true">›</span>
+          </button>
         </div>
-        <div class="form-group">
-          <label for="new-clip-prompt"><span data-i18n="dest.prompt"></span> <small class="label-help" data-i18n="dest.promptHelp"></small></label>
-          <textarea id="new-clip-prompt" rows="2" data-i18n-placeholder="dest.promptPh"></textarea>
+        <p class="footer" data-i18n="p.row.foot"></p>
+
+        <div class="group">
+          <label class="row">
+            <span class="row-label" data-i18n="s.threeFinger"></span>
+            <input type="checkbox" class="switch" id="opt-three-finger" />
+          </label>
         </div>
+        <p class="footer">
+          <span data-i18n="s.threeFinger.foot"></span>
+          <button type="button" id="open-trackpad" class="link" data-i18n="s.openTrackpad"></button>
+        </p>
+      </section>
+
+      <!-- 2. Your AIs and search sites -->
+      <section class="section">
+        <div class="section-head">
+          <h2 data-i18n="s.sec.sites"></h2>
+          <button type="button" id="reorder-btn" class="link" data-i18n="s.editDests"></button>
+        </div>
+        <div class="group" id="sites-group">
+          <div id="destinations-list"></div>
+          <button type="button" id="add-btn" class="row row-button link" data-i18n="s.addSite"></button>
+        </div>
+        <p class="footer" data-i18n="s.sites.foot"></p>
+      </section>
+
+      <!-- 3. Use it from other apps -->
+      <section class="section shortcuts-section">
+        <h2 data-i18n="s.sec.other"></h2>
+        <div class="group">
+          <label class="row">
+            <span class="row-label" data-i18n="s.edge"></span>
+            <input type="checkbox" class="switch" id="opt-edge-hover" />
+          </label>
+          <label class="row">
+            <span class="row-label" data-i18n="gen.autostart"></span>
+            <input type="checkbox" class="switch" id="opt-autostart" />
+          </label>
+        </div>
+
+        <h3 class="sub-title" data-i18n="s.shortcuts"></h3>
+        <div class="group">
+          <div class="row shortcut-row" data-action="toggle_sidebar">
+            <span class="row-label" data-i18n="keys.toggle"></span>
+            <kbd class="shortcut-key" tabindex="0"></kbd>
+          </div>
+          <div class="row shortcut-row" data-action="screenshot">
+            <span class="row-label" data-i18n="keys.screenshot"></span>
+            <kbd class="shortcut-key" tabindex="0"></kbd>
+          </div>
+          <div class="row shortcut-row" data-action="export">
+            <span class="row-label" data-i18n="keys.export"></span>
+            <kbd class="shortcut-key" tabindex="0"></kbd>
+          </div>
+        </div>
+        <p class="footer" data-i18n="s.shortcuts.foot"></p>
+
+        <h3 class="sub-title" data-i18n="s.fixedKeys"></h3>
+        <div class="group">
+          <div class="row fixed-row"><span class="row-label" data-i18n="keys.copy"></span><kbd>⌘C ⌘C</kbd></div>
+          <div class="row fixed-row"><span class="row-label" data-i18n="keys.reload"></span><kbd>⌘R</kbd></div>
+          <div class="row fixed-row"><span class="row-label" data-i18n="keys.close"></span><kbd>⌘W</kbd></div>
+          <div class="row fixed-row"><span class="row-label" data-i18n="s.newTab"></span><kbd>⌘T</kbd></div>
+          <div class="row fixed-row"><span class="row-label" data-i18n="s.reopenTab"></span><kbd>⌘⇧T</kbd></div>
+        </div>
+      </section>
+
+      <!-- 4. General -->
+      <section class="section update-section">
+        <h2 data-i18n="s.sec.general"></h2>
+        <div class="group">
+          <label class="row">
+            <span class="row-label" data-i18n="gen.language"></span>
+            <select id="opt-language">
+              <option value="zh-TW">繁體中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+        </div>
+
+        <h3 class="sub-title" data-i18n="upd.section"></h3>
+        <div class="group">
+          <div class="row update-row">
+            <span class="row-text">
+              <strong>Peekabrowser <span id="app-version"></span></strong>
+              <small id="update-message">—</small>
+            </span>
+            <div class="update-actions">
+              <button id="update-check" class="btn-secondary" data-i18n="upd.check"></button>
+              <button id="update-install" class="btn-primary hidden" data-i18n="upd.install"></button>
+            </div>
+          </div>
+          <label class="row">
+            <span class="row-label" data-i18n="upd.autoCheck"></span>
+            <input type="checkbox" class="switch" id="opt-auto-check" />
+          </label>
+          <label class="row">
+            <span class="row-label" data-i18n="upd.autoInstall"></span>
+            <input type="checkbox" class="switch" id="opt-auto-install" />
+          </label>
+        </div>
+        <p class="footer" data-i18n="upd.autoInstallHelp"></p>
+        <details id="update-notes" class="hidden"><summary data-i18n="upd.notes"></summary><pre id="update-notes-body"></pre></details>
+      </section>
+
+      <!-- 5. About -->
+      <section class="section">
+        <h2 data-i18n="s.sec.about"></h2>
+        <div class="group">
+          <button type="button" id="open-github" class="row row-button">
+            <span class="row-label" data-i18n="s.github"></span>
+            <span class="chev">›</span>
+          </button>
+          <div class="row">
+            <span class="row-label" data-i18n="s.license"></span>
+            <span class="row-value">MIT</span>
+          </div>
+        </div>
+        <p class="signature" id="signature"></p>
+      </section>
+    </div>
+
+    <!-- ─── Site detail / add page ─── -->
+    <div id="view-site" class="hidden">
+      <button type="button" id="back-btn" class="link back" data-i18n="s.back"></button>
+      <h1 id="form-title" data-i18n="s.site.addTitle"></h1>
+
+      <section class="section" id="catalog-section">
+        <h2 data-i18n="s.site.catalog"></h2>
+        <div id="preset-chips"></div>
+      </section>
+
+      <div id="add-form">
+        <div class="group fields">
+          <div class="field">
+            <label for="new-name" data-i18n="dest.name"></label>
+            <input id="new-name" type="text" data-i18n-placeholder="dest.namePh" />
+          </div>
+          <div class="field">
+            <label for="new-url" data-i18n="dest.url"></label>
+            <input id="new-url" type="text" data-i18n-placeholder="dest.urlPh" />
+          </div>
+          <div class="field">
+            <label for="new-icon" data-i18n="dest.icon"></label>
+            <input id="new-icon" type="text" data-i18n-placeholder="dest.iconPh" maxlength="2" />
+          </div>
+          <div class="field">
+            <label for="new-clip-prompt" data-i18n="dest.prompt"></label>
+            <textarea id="new-clip-prompt" rows="3" data-i18n-placeholder="dest.promptPh"></textarea>
+          </div>
+        </div>
+        <p class="footer" data-i18n="s.site.promptHelp"></p>
+
         <div class="form-actions">
           <button id="save-btn" class="btn-primary" data-i18n="common.save"></button>
           <button id="cancel-btn" class="btn-secondary" data-i18n="common.cancel"></button>
         </div>
-      </div>
-    </section>
-
-    <!-- ⌘C ⌘C -->
-    <section class="group">
-      <h2 data-i18n="copy.section"></h2>
-      <div class="card list">
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="copy.autoFirst"></strong>
-            <small data-i18n="copy.autoFirstHelp"></small>
-          </span>
-          <input type="checkbox" class="switch" id="opt-auto-first" />
-        </label>
-        <div class="row hidden" id="copy-ax-row">
-          <span class="row-text">
-            <strong data-i18n="copy.axOff"></strong>
-            <small data-i18n="copy.axOffHelp"></small>
-          </span>
-          <button id="copy-ax-open" class="btn-secondary" data-i18n="copy.axOpen"></button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Appearance & power -->
-    <section class="group">
-      <h2 data-i18n="power.section"></h2>
-      <div class="card list">
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="power.edge"></strong>
-            <small data-i18n="power.edgeHelp"></small>
-          </span>
-          <input type="checkbox" class="switch" id="opt-edge-hover" />
-        </label>
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="power.material"></strong>
-            <small data-i18n="power.materialHelp"></small>
-          </span>
-          <input type="checkbox" class="switch" id="opt-material" />
-        </label>
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="power.unload"></strong>
-            <small data-i18n="power.unloadHelp"></small>
-          </span>
-          <select id="opt-unload">
-            <option value="120" data-min="2"></option>
-            <option value="300" data-min="5"></option>
-            <option value="600" data-min="10"></option>
-            <option value="1800" data-min="30"></option>
-          </select>
-        </label>
-      </div>
-      <p class="hint footnote" id="diagnostics"></p>
-    </section>
-
-    <!-- Shortcuts -->
-    <section class="group shortcuts-section">
-      <h2 data-i18n="keys.section"></h2>
-      <p class="hint" data-i18n="keys.hint"></p>
-      <div class="card list">
-        <div class="shortcut-row" data-action="toggle_sidebar">
-          <span data-i18n="keys.toggle"></span>
-          <kbd class="shortcut-key" tabindex="0"></kbd>
-        </div>
-        <div class="shortcut-row" data-action="screenshot">
-          <span data-i18n="keys.screenshot"></span>
-          <kbd class="shortcut-key" tabindex="0"></kbd>
-        </div>
-        <div class="shortcut-row" data-action="export">
-          <span data-i18n="keys.export"></span>
-          <kbd class="shortcut-key" tabindex="0"></kbd>
-        </div>
-        <div class="shortcut-row fixed-row"><span data-i18n="keys.copy"></span><kbd>⌘C ⌘C</kbd></div>
-        <div class="shortcut-row fixed-row"><span data-i18n="keys.reload"></span><kbd>⌘R</kbd></div>
-        <div class="shortcut-row fixed-row"><span data-i18n="keys.close"></span><kbd>⌘W</kbd></div>
-      </div>
-    </section>
-
-    <!-- Updates -->
-    <section class="group update-section">
-      <h2 data-i18n="upd.section"></h2>
-      <div class="card list">
-        <div class="row update-row">
-          <span class="row-text">
-            <strong>Peekabrowser <span id="app-version"></span></strong>
-            <small id="update-message">—</small>
-          </span>
-          <div class="update-actions">
-            <button id="update-check" class="btn-secondary" data-i18n="upd.check"></button>
-            <button id="update-install" class="btn-primary hidden" data-i18n="upd.install"></button>
+        <section class="section" id="site-prompts-section">
+          <div class="section-head">
+            <h2 data-i18n="p.prompts"></h2>
+            <button type="button" class="link prompts-reorder" data-i18n="s.reorder"></button>
           </div>
-        </div>
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="upd.autoCheck"></strong>
-            <small data-i18n="upd.autoCheckHelp"></small>
-          </span>
-          <input type="checkbox" class="switch" id="opt-auto-check" />
-        </label>
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="upd.autoInstall"></strong>
-            <small data-i18n="upd.autoInstallHelp"></small>
-          </span>
-          <input type="checkbox" class="switch" id="opt-auto-install" />
-        </label>
-      </div>
-      <details id="update-notes" class="hidden"><summary data-i18n="upd.notes"></summary><pre id="update-notes-body"></pre></details>
-    </section>
+          <div class="group prompt-group">
+            <div class="prompt-list" id="site-prompts"></div>
+            <button type="button" class="row row-button link prompts-add" data-i18n="p.add"></button>
+          </div>
+          <p class="footer" data-i18n="p.dest.foot"></p>
+        </section>
+        <p class="footer hidden" id="site-prompts-later" data-i18n="p.dest.afterSave"></p>
 
-    <!-- General -->
-    <section class="group">
-      <h2 data-i18n="gen.section"></h2>
-      <div class="card list">
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="gen.language"></strong>
-            <small data-i18n="gen.languageHelp"></small>
-          </span>
-          <select id="opt-language">
-            <option value="zh-TW">繁體中文</option>
-            <option value="en">English</option>
-          </select>
-        </label>
-        <label class="row">
-          <span class="row-text">
-            <strong data-i18n="gen.autostart"></strong>
-            <small data-i18n="gen.autostartHelp"></small>
-          </span>
-          <input type="checkbox" class="switch" id="opt-autostart" />
-        </label>
+        <button type="button" id="delete-btn" class="link danger hidden" data-i18n="s.site.delete"></button>
       </div>
-    </section>
+    </div>
+
+    <!-- ─── Prompts for your profession: template list ─── -->
+    <div id="view-templates" class="hidden">
+      <button type="button" class="link back to-main" data-i18n="s.back"></button>
+      <h1 data-i18n="p.row"></h1>
+      <section class="section">
+        <div class="group" id="template-list" role="radiogroup" data-i18n-aria="p.row"></div>
+        <p class="footer" data-i18n="p.list.foot"></p>
+      </section>
+    </div>
+
+    <!-- ─── One template's prompts ─── -->
+    <div id="view-template" class="hidden">
+      <button type="button" class="link back" id="to-templates"></button>
+      <h1 id="template-title"></h1>
+      <section class="section" id="template-prompts-section">
+        <div class="section-head">
+          <h2 data-i18n="p.prompts"></h2>
+          <button type="button" class="link prompts-reorder" data-i18n="s.reorder"></button>
+        </div>
+        <div class="group prompt-group">
+          <div class="prompt-list" id="template-prompts"></div>
+          <button type="button" class="row row-button link prompts-add" data-i18n="p.add"></button>
+        </div>
+        <p class="footer" data-i18n="p.template.foot"></p>
+      </section>
+      <div class="group">
+        <button type="button" id="restore-template" class="row row-button link danger" data-i18n="p.restore"></button>
+      </div>
+    </div>
   </div>
+
+  <!-- ─── Prompt form (name + prompt) ─── -->
+  <dialog id="prompt-dialog" aria-labelledby="prompt-dialog-title">
+    <form method="dialog" id="prompt-form">
+      <h2 id="prompt-dialog-title" data-i18n="p.prompt"></h2>
+      <div class="group fields">
+        <div class="field">
+          <label for="prompt-name" data-i18n="dest.name"></label>
+          <input id="prompt-name" type="text" data-i18n-placeholder="p.namePh" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="prompt-text" data-i18n="p.prompt"></label>
+          <textarea id="prompt-text" rows="4" data-i18n-placeholder="p.promptPh"></textarea>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="prompt-delete" class="link danger" data-i18n="p.delete"></button>
+        <span class="spacer"></span>
+        <button type="button" id="prompt-cancel" class="btn-secondary" data-i18n="common.cancel"></button>
+        <button type="submit" id="prompt-save" class="btn-primary" data-i18n="common.save"></button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

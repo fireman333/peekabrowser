@@ -1,0 +1,90 @@
+/* Empty state: the selected destination has no tabs. Fills the viewer
+   column (chrome row included) on the same material as the rail. */
+@import "./theme.css";
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--glass-bg);
+  font-family: var(--font);
+  color: var(--ink1);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:root[data-material] body {
+  background: transparent;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-material] body,
+  body {
+    background: var(--solid-chrome);
+  }
+}
+
+#empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s4);
+  padding: var(--s5);
+}
+
+#empty-title {
+  font-size: var(--fs-headline);
+  font-weight: 600;
+  color: var(--ink2);
+}
+
+#new-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 var(--s4) 0 var(--s3);
+  border: none;
+  border-radius: 18px;
+  background: var(--tide);
+  color: var(--on-tide);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  cursor: default;
+  transition: background var(--t-quick) var(--ease-smooth);
+}
+
+#new-tab:hover {
+  background: var(--tide-pressed);
+}
+
+#new-tab:active {
+  transform: scale(0.98);
+}
+
+#new-tab span[data-icon] {
+  display: flex;
+}
+
+#new-tab svg {
+  width: 16px;
+  height: 16px;
+}
+
+#new-tab:focus {
+  outline: none;
+}
+
+#new-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--tide) 60%, transparent);
+  outline-offset: 2px;
+}

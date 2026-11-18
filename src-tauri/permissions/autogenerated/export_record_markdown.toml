@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-record-markdown"
+description = "Enables the export_record_markdown command without any pre-configured scope."
+commands.allow = ["export_record_markdown"]
+
+[[permission]]
+identifier = "deny-export-record-markdown"
+description = "Denies the export_record_markdown command without any pre-configured scope."
+commands.deny = ["export_record_markdown"]
