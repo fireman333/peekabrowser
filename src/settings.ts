@@ -33,29 +33,83 @@ const PRESETS = [
   { name: "Reminders", url: "system://reminders", icon: "☑️" },
 ];
 
+/** Monogram tile colours (match theme.css), keyed by a lowercase name fragment. */
+const TILE_COLORS: [string, string][] = [
+  ["google", "var(--tile-google)"],
+  ["chatgpt", "var(--tile-chatgpt)"],
+  ["claude", "var(--tile-claude)"],
+  ["gemini", "var(--tile-gemini)"],
+  ["perplexity", "var(--tile-perplexity)"],
+  ["openevidence", "var(--tile-openevidence)"],
+];
+
+function tileColor(name: string): string {
+  const n = name.toLowerCase();
+  return TILE_COLORS.find(([k]) => n.includes(k))?.[1] ?? "var(--tile-other)";
+}
+
 let destinations: Destination[] = [];
 let editingId: string | null = null; // Currently editing destination ID
+let reordering = false;
+let appVersion = "";
 let shortcuts: ShortcutConfig = {
   toggle_sidebar: "Command+Shift+A",
   screenshot: "Command+Shift+S",
   export: "Command+Shift+E",
 };
 
-const listEl = document.getElementById("destinations-list")!;
-const addBtn = document.getElementById("add-btn")!;
-const addForm = document.getElementById("add-form")!;
-const saveBtn = document.getElementById("save-btn")!;
-const cancelBtn = document.getElementById("cancel-btn")!;
-const presetChips = document.getElementById("preset-chips")!;
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+const listEl = $("destinations-list");
+const addBtn = $("add-btn");
+const saveBtn = $("save-btn");
+const cancelBtn = $("cancel-btn");
+const presetChips = $("preset-chips");
+const viewMain = $("view-main");
+const viewSite = $("view-site");
 
 interface AppSettings {
   edge_hover_enabled: boolean;
   native_material: boolean;
   background_unload_secs: number;
   auto_send_first: boolean;
+  text_from_other_apps: string;
+  fixed_destination_id: string | null;
+  last_used_destination_id: string | null;
+  auto_submit: boolean;
+  three_finger_lookup: boolean;
   auto_check_updates: boolean;
   auto_install_updates: boolean;
   language: string;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  edge_hover_enabled: true,
+  native_material: true,
+  background_unload_secs: 300,
+  auto_send_first: false,
+  text_from_other_apps: "choose",
+  fixed_destination_id: null,
+  last_used_destination_id: null,
+  auto_submit: true,
+  three_finger_lookup: false,
+  auto_check_updates: true,
+  auto_install_updates: false,
+  language: "zh-TW",
+};
+
+let appSettings: AppSettings = { ...DEFAULT_SETTINGS };
+
+/**
+ * Persist a partial change. Re-reads the stored settings first so values the
+ * backend updates on its own (last_used_destination_id) are never overwritten
+ * by a stale copy held by this window.
+ */
+async function saveSettings(patch: Partial<AppSettings>) {
+  let base = appSettings;
+  try { base = await invoke<AppSettings>("get_app_settings"); } catch (_e) {}
+  appSettings = { ...base, ...patch };
+  try { await invoke("save_app_settings", { settings: appSettings }); } catch (_e) {}
 }
 
 interface UpdateInfo {
@@ -73,10 +127,10 @@ interface UpdateStatus {
 }
 
 function renderUpdate(st: UpdateStatus) {
-  const msg = document.getElementById("update-message")!;
-  const install = document.getElementById("update-install")!;
-  const check = document.getElementById("update-check") as HTMLButtonElement;
-  const notes = document.getElementById("update-notes")!;
+  const msg = $("update-message");
+  const install = $("update-install");
+  const check = $<HTMLButtonElement>("update-check");
+  const notes = $("update-notes");
   const busy = ["checking", "downloading", "installing"].includes(st.state);
   msg.textContent = st.message || (st.state === "idle" ? t("upd.notChecked") : st.state);
   msg.className = st.state === "error" ? "error" : st.state === "available" ? "available" : "";
@@ -85,7 +139,7 @@ function renderUpdate(st: UpdateStatus) {
   install.classList.toggle("hidden", !available);
   if (st.info?.available && st.info.notes) {
     notes.classList.remove("hidden");
-    document.getElementById("update-notes-body")!.textContent = st.info.notes;
+    $("update-notes-body").textContent = st.info.notes;
   } else {
     notes.classList.add("hidden");
   }
@@ -93,24 +147,31 @@ function renderUpdate(st: UpdateStatus) {
 
 let lastUpdate: UpdateStatus | null = null;
 
+function renderSignature() {
+  $("signature").textContent = appVersion ? t("s.signature", { v: appVersion }) : "";
+}
+
 async function setupUpdates() {
   const show = (st: UpdateStatus) => { lastUpdate = st; renderUpdate(st); };
-  onLangChange(() => { if (lastUpdate) renderUpdate(lastUpdate); });
+  onLangChange(() => { if (lastUpdate) renderUpdate(lastUpdate); renderSignature(); });
   try {
-    document.getElementById("app-version")!.textContent = "v" + (await invoke<string>("get_app_version"));
+    appVersion = "v" + (await invoke<string>("get_app_version"));
+    $("app-version").textContent = appVersion;
+    renderSignature();
     show(await invoke<UpdateStatus>("get_update_status"));
   } catch (_e) {}
   listen<UpdateStatus>("update-status", (e) => show(e.payload)).catch(() => {});
-  document.getElementById("update-check")!.addEventListener("click", async () => {
+  $("update-check").addEventListener("click", async () => {
     try { await invoke("check_for_updates"); } catch (_e) { /* status event shows the error */ }
   });
-  document.getElementById("update-install")!.addEventListener("click", async () => {
+  $("update-install").addEventListener("click", async () => {
     try {
       await invoke("install_update");
     } catch (e) {
       if (confirm(`${e}\n\n${t("upd.manualPrompt")}`)) invoke("open_release_page").catch(() => {});
     }
   });
+  $("open-github").addEventListener("click", () => { invoke("open_release_page").catch(() => {}); });
 }
 
 interface Diagnostics {
@@ -122,98 +183,111 @@ interface Diagnostics {
   double_copy_active: boolean;
 }
 
-async function setupPowerSettings() {
-  const edge = document.getElementById("opt-edge-hover") as HTMLInputElement;
-  const material = document.getElementById("opt-material") as HTMLInputElement;
-  const unload = document.getElementById("opt-unload") as HTMLSelectElement;
-  const autoFirst = document.getElementById("opt-auto-first") as HTMLInputElement;
-  const autoCheck = document.getElementById("opt-auto-check") as HTMLInputElement;
-  const autoInstall = document.getElementById("opt-auto-install") as HTMLInputElement;
-  const language = document.getElementById("opt-language") as HTMLSelectElement;
-  let current: AppSettings;
+// ─── Settings toggles / selects ────────────────────────────
+
+function renderMode() {
+  const mode = appSettings.text_from_other_apps;
+  document.querySelectorAll<HTMLButtonElement>("#seg-mode button").forEach((b) => {
+    b.setAttribute("aria-checked", String(b.dataset.mode === mode));
+  });
+  $("fixed-row").classList.toggle("hidden", mode !== "fixed");
+}
+
+/** Fill the "Send to" select from the destination list and select the stored one. */
+function renderFixedSelect() {
+  const sel = $<HTMLSelectElement>("opt-fixed-dest");
+  const sorted = [...destinations].sort((a, b) => a.order - b.order);
+  sel.innerHTML = "";
+  sorted.forEach((d) => {
+    const o = document.createElement("option");
+    o.value = d.id;
+    o.textContent = d.name;
+    sel.appendChild(o);
+  });
+  const id = appSettings.fixed_destination_id;
+  sel.value = id && sorted.some((d) => d.id === id) ? id : (sorted[0]?.id ?? "");
+}
+
+async function setupSettings() {
+  const edge = $<HTMLInputElement>("opt-edge-hover");
+  const autoSubmit = $<HTMLInputElement>("opt-auto-submit");
+  const three = $<HTMLInputElement>("opt-three-finger");
+  const autoCheck = $<HTMLInputElement>("opt-auto-check");
+  const autoInstall = $<HTMLInputElement>("opt-auto-install");
+  const language = $<HTMLSelectElement>("opt-language");
+  const fixedSel = $<HTMLSelectElement>("opt-fixed-dest");
+
   try {
-    current = await invoke<AppSettings>("get_app_settings");
+    appSettings = await invoke<AppSettings>("get_app_settings");
   } catch {
-    return;
+    appSettings = { ...DEFAULT_SETTINGS }; // not inside Tauri: still render the layout
   }
-  edge.checked = current.edge_hover_enabled;
-  material.checked = current.native_material;
-  autoFirst.checked = current.auto_send_first;
-  autoCheck.checked = current.auto_check_updates;
-  autoInstall.checked = current.auto_install_updates;
+  edge.checked = appSettings.edge_hover_enabled;
+  autoSubmit.checked = appSettings.auto_submit;
+  three.checked = appSettings.three_finger_lookup;
+  autoCheck.checked = appSettings.auto_check_updates;
+  autoInstall.checked = appSettings.auto_install_updates;
   autoInstall.disabled = !autoCheck.checked;
   language.value = getLang();
-  unload.value = String(current.background_unload_secs);
-  if (!unload.value) unload.value = "300";
-  const save = async () => {
-    current = {
-      ...current,
-      edge_hover_enabled: edge.checked,
-      native_material: material.checked,
-      background_unload_secs: Number(unload.value) || 300,
-      auto_send_first: autoFirst.checked,
-      auto_check_updates: autoCheck.checked,
-      auto_install_updates: autoInstall.checked,
-      language: normalizeLang(language.value),
-    };
+  renderMode();
+  renderFixedSelect();
+
+  edge.addEventListener("change", () => saveSettings({ edge_hover_enabled: edge.checked }));
+  autoSubmit.addEventListener("change", () => saveSettings({ auto_submit: autoSubmit.checked }));
+  three.addEventListener("change", () => saveSettings({ three_finger_lookup: three.checked }));
+  autoCheck.addEventListener("change", () => {
     autoInstall.disabled = !autoCheck.checked;
-    try { await invoke("save_app_settings", { settings: current }); } catch (_e) {}
-  };
-  edge.addEventListener("change", save);
-  material.addEventListener("change", save);
-  unload.addEventListener("change", save);
-  autoFirst.addEventListener("change", save);
-  autoCheck.addEventListener("change", save);
-  autoInstall.addEventListener("change", save);
+    saveSettings({ auto_check_updates: autoCheck.checked });
+  });
+  autoInstall.addEventListener("change", () => saveSettings({ auto_install_updates: autoInstall.checked }));
   language.addEventListener("change", async () => {
     setLang(normalizeLang(language.value) as Lang);
-    await save();
+    await saveSettings({ language: normalizeLang(language.value) });
   });
   // Another window (or a restart) may change the language; keep the picker in sync.
   onLangChange((l) => { language.value = l; });
 
-  const diag = document.getElementById("diagnostics")!;
-  const axRow = document.getElementById("copy-ax-row")!;
-  document.getElementById("copy-ax-open")!.addEventListener("click", () => {
-    invoke("regrant_accessibility").catch(() => {});
+  document.querySelectorAll<HTMLButtonElement>("#seg-mode button").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const mode = b.dataset.mode!;
+      appSettings = { ...appSettings, text_from_other_apps: mode };
+      renderMode();
+      const patch: Partial<AppSettings> = { text_from_other_apps: mode };
+      if (mode === "fixed") {
+        renderFixedSelect();
+        if (fixedSel.value) patch.fixed_destination_id = fixedSel.value;
+      }
+      await saveSettings(patch);
+    });
   });
-  let last: Diagnostics | null = null;
-  const render = () => {
-    if (!last) return;
-    const d = last;
-    diag.textContent = [
-      t("diag.status", { loaded: d.loaded_pages, total: d.total_pages }),
-      d.activity_work ? t("diag.activity", { n: d.activity_work }) : t("diag.noActivity"),
-      t("diag.material", { m: d.system_glass ? "Liquid Glass" : t("diag.vibrancy") }),
-      d.double_copy_active ? t("diag.keyTriggered") : t("diag.copyOff"),
-    ].join(" · ");
-    axRow.classList.toggle("hidden", d.double_copy_active);
-  };
+  fixedSel.addEventListener("change", () => saveSettings({ fixed_destination_id: fixedSel.value || null }));
+
+  $("open-trackpad").addEventListener("click", () => { invoke("open_trackpad_settings").catch(() => {}); });
+
+  // Accessibility re-grant row: only shown while ⌘C ⌘C is inactive.
+  const axRow = $("copy-ax-row");
+  $("copy-ax-open").addEventListener("click", () => { invoke("regrant_accessibility").catch(() => {}); });
   const refresh = async () => {
     try {
-      last = await invoke<Diagnostics>("get_diagnostics");
-      render();
+      const d = await invoke<Diagnostics>("get_diagnostics");
+      axRow.classList.toggle("hidden", d.double_copy_active);
     } catch (_e) {}
   };
-  onLangChange(render);
   refresh();
   setInterval(() => { if (!document.hidden) refresh(); }, 5000);
 }
 
 /** Texts that are built in code rather than marked up with data-i18n. */
 function applyDynamicTexts() {
-  document.querySelectorAll<HTMLOptionElement>("#opt-unload option[data-min]").forEach((o) => {
-    o.textContent = t("power.min", { n: o.dataset.min! });
-  });
-  const formTitle = document.getElementById("form-title");
-  if (formTitle) formTitle.textContent = t(editingId ? "dest.editTitle" : "dest.addTitle");
+  $("form-title").textContent = t(editingId ? "s.site.editTitle" : "s.site.addTitle");
   saveBtn.textContent = t(editingId ? "common.update" : "common.save");
+  $("reorder-btn").textContent = t(reordering ? "s.done" : "s.reorder");
 }
 
 // ─── Launch at login ───────────────────────────────────────
 
 async function setupAutostart() {
-  const box = document.getElementById("opt-autostart") as HTMLInputElement;
+  const box = $<HTMLInputElement>("opt-autostart");
   const sync = async () => {
     try {
       box.checked = await invoke<boolean>("get_autostart");
@@ -245,15 +319,34 @@ window.addEventListener("DOMContentLoaded", async () => {
     renderPresets();
     cancelAllRecordings();
   });
-  setupAutostart();
-  setupPowerSettings();
-  setupUpdates();
+  // Load destinations first: the "Send to" select is built from them.
   await loadDestinations();
-  await loadShortcuts();
+  const steps: Array<() => unknown> = [setupAutostart, setupSettings, setupUpdates, loadShortcuts];
+  for (const step of steps) {
+    try { await step(); } catch (e) { console.warn("settings: step failed", e); }
+  }
   renderPresets();
   setupListeners();
   setupShortcutEditing();
 });
+
+// ─── Pages ─────────────────────────────────────────────────
+
+function showSite() {
+  viewMain.classList.add("hidden");
+  viewSite.classList.remove("hidden");
+  $("catalog-section").classList.toggle("hidden", !!editingId);
+  $("delete-btn").classList.toggle("hidden", !editingId);
+  applyDynamicTexts();
+  window.scrollTo(0, 0);
+}
+
+function showMain() {
+  viewSite.classList.add("hidden");
+  viewMain.classList.remove("hidden");
+  editingId = null;
+  applyDynamicTexts();
+}
 
 // ─── Destinations ──────────────────────────────────────────
 
@@ -262,13 +355,47 @@ async function loadDestinations() {
     destinations = await invoke<Destination[]>("get_destinations");
   } catch (_e) {
     destinations = [];
+    if ((import.meta as any).env?.DEV && !(window as any).__TAURI_INTERNALS__) {
+      // Browser-only preview (no Tauri backend): show sample rows so the layout is visible.
+      destinations = [
+        { id: "a", name: "Google", url: "https://www.google.com", icon: "", order: 0, clip_prompt: "" },
+        { id: "b", name: "ChatGPT", url: "https://chat.openai.com", icon: "", order: 1, clip_prompt: "" },
+        { id: "c", name: "Claude", url: "https://claude.ai", icon: "", order: 2, clip_prompt: "請用繁體中文回答：" },
+      ];
+    }
   }
   renderList();
 }
 
+function iconHtml(d: Destination): string {
+  if (d.icon && d.icon.trim()) return `<span class="icon">${escapeHtml(d.icon)}</span>`;
+  const letter = escapeHtml((d.name.trim()[0] ?? "?").toUpperCase());
+  try {
+    const host = new URL(d.url).hostname;
+    if (host) {
+      return `<span class="icon" data-letter="${letter}" data-color="${tileColor(d.name)}"><img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64" width="28" height="28" alt=""></span>`;
+    }
+  } catch { /* fall through to monogram */ }
+  return `<span class="icon" style="background:${tileColor(d.name)};color:#fff;font-weight:600;font-size:14px">${letter}</span>`;
+}
+
+// A favicon that fails to load becomes a monogram tile.
+listEl.addEventListener("error", (e) => {
+  const img = e.target as HTMLElement;
+  if (img.tagName !== "IMG") return;
+  const holder = img.parentElement!;
+  holder.style.background = holder.dataset.color || "var(--tile-other)";
+  holder.style.color = "#fff";
+  holder.style.fontWeight = "600";
+  holder.style.fontSize = "14px";
+  holder.textContent = holder.dataset.letter || "?";
+}, true);
+
 function renderList() {
   listEl.innerHTML = "";
+  $("sites-group").classList.toggle("reordering", reordering);
   const sorted = [...destinations].sort((a, b) => a.order - b.order);
+  renderFixedSelect();
   if (sorted.length === 0) {
     listEl.innerHTML = `<div class="dest-empty">${t("dest.empty")}</div>`;
     return;
@@ -276,34 +403,32 @@ function renderList() {
   sorted.forEach((d, idx) => {
     const el = document.createElement("div");
     el.className = "dest-item";
-    const iconHtml = d.icon && d.icon.trim()
-      ? d.icon
-      : (() => { try { return `<img src="https://www.google.com/s2/favicons?domain=${new URL(d.url).hostname}&sz=32" width="20" height="20" style="vertical-align:middle" onerror="this.replaceWith(document.createTextNode('🌐'))">`; } catch { return '🌐'; } })();
+    const sub = (idx === 0 ? `<span class="default">${t("s.default")}</span> · ` : "") + escapeHtml(d.url);
     el.innerHTML = `
-      <span class="icon">${iconHtml}</span>
+      ${iconHtml(d)}
       <div class="info">
         <div class="name">${escapeHtml(d.name)}</div>
-        <div class="url">${escapeHtml(d.url)}</div>
+        <div class="sub">${sub}</div>
       </div>
       <div class="reorder-btns">
-        <button class="reorder-btn up-btn" title="${t("dest.moveUp")}" aria-label="${t("dest.moveUp")}" ${idx === 0 ? "disabled" : ""}>↑</button>
-        <button class="reorder-btn down-btn" title="${t("dest.moveDown")}" aria-label="${t("dest.moveDown")}" ${idx === sorted.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="icon-btn up-btn" title="${t("dest.moveUp")}" aria-label="${t("dest.moveUp")}" ${idx === 0 ? "disabled" : ""}>↑</button>
+        <button class="icon-btn down-btn" title="${t("dest.moveDown")}" aria-label="${t("dest.moveDown")}" ${idx === sorted.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="icon-btn remove-btn" title="${t("dest.remove")}" aria-label="${t("dest.remove")}">✕</button>
       </div>
-      <button class="edit-btn" title="${t("dest.edit")}" aria-label="${t("dest.edit")}">✎</button>
-      <button class="remove-btn" title="${t("dest.remove")}" aria-label="${t("dest.remove")}">✕</button>
+      <span class="chev" aria-hidden="true">›</span>
     `;
+    el.addEventListener("click", () => { if (!reordering) startEdit(d); });
     el.querySelector(".up-btn")!.addEventListener("click", () => moveDestination(d.id, -1));
     el.querySelector(".down-btn")!.addEventListener("click", () => moveDestination(d.id, 1));
-    el.querySelector(".edit-btn")!.addEventListener("click", () => {
-      startEdit(d);
-    });
-    el.querySelector(".remove-btn")!.addEventListener("click", async () => {
-      try { await invoke("remove_destination", { id: d.id }); } catch (_e) {}
-      destinations = destinations.filter((x) => x.id !== d.id);
-      renderList();
-    });
+    el.querySelector(".remove-btn")!.addEventListener("click", () => removeDestination(d.id));
     listEl.appendChild(el);
   });
+}
+
+async function removeDestination(id: string) {
+  try { await invoke("remove_destination", { id }); } catch (_e) {}
+  destinations = destinations.filter((x) => x.id !== id);
+  renderList();
 }
 
 async function moveDestination(id: string, direction: number) {
@@ -330,12 +455,11 @@ async function moveDestination(id: string, direction: number) {
 
 function startEdit(d: Destination) {
   editingId = d.id;
-  (document.getElementById("new-name") as HTMLInputElement).value = d.name;
-  (document.getElementById("new-url") as HTMLInputElement).value = d.url;
-  (document.getElementById("new-icon") as HTMLInputElement).value = d.icon;
-  (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value = d.clip_prompt || "";
-  addForm.classList.remove("hidden");
-  applyDynamicTexts();
+  $<HTMLInputElement>("new-name").value = d.name;
+  $<HTMLInputElement>("new-url").value = d.url;
+  $<HTMLInputElement>("new-icon").value = d.icon;
+  $<HTMLTextAreaElement>("new-clip-prompt").value = d.clip_prompt || "";
+  showSite();
 }
 
 function renderPresets() {
@@ -346,28 +470,27 @@ function renderPresets() {
     if (p.icon && p.icon.trim()) {
       chip.textContent = `${p.icon} ${p.name}`;
     } else {
-      chip.innerHTML = `<img src="https://www.google.com/s2/favicons?domain=${new URL(p.url).hostname}&sz=32" width="16" height="16" style="vertical-align:middle" onerror="this.replaceWith(document.createTextNode('🌐'))"> ${p.name}`;
+      chip.innerHTML = `<img src="https://www.google.com/s2/favicons?domain=${new URL(p.url).hostname}&sz=32" width="16" height="16" alt="" style="vertical-align:middle"> ${escapeHtml(p.name)}`;
+      chip.querySelector("img")!.addEventListener("error", (e) => (e.target as HTMLElement).replaceWith(document.createTextNode("🌐")));
     }
     chip.addEventListener("click", () => {
-      (document.getElementById("new-name") as HTMLInputElement).value = p.name;
-      (document.getElementById("new-url") as HTMLInputElement).value = p.url;
-      (document.getElementById("new-icon") as HTMLInputElement).value = p.icon;
+      $<HTMLInputElement>("new-name").value = p.name;
+      $<HTMLInputElement>("new-url").value = p.url;
+      $<HTMLInputElement>("new-icon").value = p.icon;
     });
     presetChips.appendChild(chip);
   });
 
-  // "+ Add" chip for custom destinations
+  // "+ Custom" chip: clear the fields for a hand-typed site
   const addChip = document.createElement("button");
   addChip.className = "preset-chip preset-chip-add";
   addChip.textContent = t("dest.custom");
   addChip.addEventListener("click", () => {
-    const nameInput = document.getElementById("new-name") as HTMLInputElement;
-    const urlInput = document.getElementById("new-url") as HTMLInputElement;
-    const iconInput = document.getElementById("new-icon") as HTMLInputElement;
+    const nameInput = $<HTMLInputElement>("new-name");
     nameInput.value = "";
-    urlInput.value = "";
-    iconInput.value = "";
-    applyI18n(addForm);
+    $<HTMLInputElement>("new-url").value = "";
+    $<HTMLInputElement>("new-icon").value = "";
+    applyI18n(viewSite);
     nameInput.focus();
   });
   presetChips.appendChild(addChip);
@@ -376,20 +499,31 @@ function renderPresets() {
 function setupListeners() {
   addBtn.addEventListener("click", () => {
     resetForm();
-    addForm.classList.remove("hidden");
+    showSite();
   });
 
-  cancelBtn.addEventListener("click", () => {
-    addForm.classList.add("hidden");
-    resetForm();
+  $("reorder-btn").addEventListener("click", () => {
+    reordering = !reordering;
+    applyDynamicTexts();
+    renderList();
   });
 
+  const leave = () => { showMain(); resetForm(); };
+  cancelBtn.addEventListener("click", leave);
+  $("back-btn").addEventListener("click", leave);
+
+  $("delete-btn").addEventListener("click", async () => {
+    if (!editingId) return;
+    if (!confirm(t("s.site.delete") + "?")) return;
+    await removeDestination(editingId);
+    leave();
+  });
 
   saveBtn.addEventListener("click", async () => {
-    const name = (document.getElementById("new-name") as HTMLInputElement).value.trim();
-    const url = (document.getElementById("new-url") as HTMLInputElement).value.trim();
-    const icon = (document.getElementById("new-icon") as HTMLInputElement).value.trim();
-    const clipPrompt = (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value;
+    const name = $<HTMLInputElement>("new-name").value.trim();
+    const url = $<HTMLInputElement>("new-url").value.trim();
+    const icon = $<HTMLInputElement>("new-icon").value.trim();
+    const clipPrompt = $<HTMLTextAreaElement>("new-clip-prompt").value;
     if (!name || !url) {
       alert(t("dest.required"));
       return;
@@ -410,7 +544,7 @@ function setupListeners() {
         });
         destinations.push(newDest);
       }
-      addForm.classList.add("hidden");
+      showMain();
       resetForm();
       renderList();
     } catch (e) {
@@ -421,10 +555,10 @@ function setupListeners() {
 
 function resetForm() {
   editingId = null;
-  (document.getElementById("new-name") as HTMLInputElement).value = "";
-  (document.getElementById("new-url") as HTMLInputElement).value = "";
-  (document.getElementById("new-icon") as HTMLInputElement).value = "";
-  (document.getElementById("new-clip-prompt") as HTMLTextAreaElement).value = "";
+  $<HTMLInputElement>("new-name").value = "";
+  $<HTMLInputElement>("new-url").value = "";
+  $<HTMLInputElement>("new-icon").value = "";
+  $<HTMLTextAreaElement>("new-clip-prompt").value = "";
   applyDynamicTexts();
 }
 

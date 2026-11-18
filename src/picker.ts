@@ -58,6 +58,10 @@ window.addEventListener("DOMContentLoaded", () => {
   // with any input method, e.g. 注音); this is only a fallback for Esc.
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") dismissPicker();
+    // Return picks the first (default) destination, as the "Default ⏎" tag says.
+    else if (e.key === "Enter" && lastData?.destinations[0] && document.activeElement?.className !== "picker-btn") {
+      pick(lastData.destinations[0]);
+    }
   });
 
   const card = document.getElementById("picker-card")!;
@@ -103,6 +107,7 @@ function renderPicker(data: PickerData) {
     btn.innerHTML = `
       <span class="picker-icon">${destIcon(dest, 22)}</span>
       <span class="picker-name">${escapeHtml(dest.name)}</span>
+      ${idx === 0 ? `<span class="picker-default">${t("picker.defaultTag")} ⏎</span>` : ""}
       ${idx < PICK_KEYS.length ? `<kbd class="picker-key" aria-hidden="true">${PICK_KEYS[idx]}</kbd>` : ""}
     `;
     btn.addEventListener("click", () => pick(dest));
