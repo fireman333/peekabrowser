@@ -69,6 +69,10 @@ pub struct WebViewTabManager {
     closed: Vec<ClosedPage>,
     view_clock: u64,
     pub active_page_id: Option<String>,
+    /// Destination selected in the rail while it has no tabs (its last tab was
+    /// closed, or it was selected with none): the viewer shows the empty state.
+    /// Only set while `active_page_id` is None.
+    empty_dest: Option<String>,
     /// Whether the panel is on screen (the active page is visible only then).
     panel_visible: bool,
     next_page: u64,
@@ -88,6 +92,7 @@ impl WebViewTabManager {
             closed: Vec::new(),
             view_clock: 0,
             active_page_id: None,
+            empty_dest: None,
             panel_visible: false,
             next_page: 0,
             next_slot: 0,
@@ -106,9 +111,35 @@ impl WebViewTabManager {
         self.pages.iter().filter(|p| p.dest_id == dest_id).count()
     }
 
-    /// Whether `page_id` is the only tab of its destination (it can't be closed).
+    /// Whether `page_id` is the only tab of its destination (closing it leaves
+    /// the destination selected and empty).
     pub fn is_last_in_dest(&self, page_id: &str) -> bool {
         self.get_page(page_id).map(|p| self.count_for_dest(&p.dest_id) <= 1).unwrap_or(false)
+    }
+
+    /// Selected destination: the active page's, or the empty one.
+    pub fn active_dest_id(&self) -> Option<String> {
+        match self.get_active_page() {
+            Some(p) => Some(p.dest_id.clone()),
+            None => self.empty_dest.clone(),
+        }
+    }
+
+    /// Destination shown as the empty state (selected, no tabs), if any.
+    pub fn empty_dest(&self) -> Option<&str> {
+        self.empty_dest.as_deref()
+    }
+
+    /// Select `dest_id` with no tab shown (the empty state). The previously
+    /// active page becomes Background and starts its idle clock.
+    pub fn select_empty_dest(&mut self, dest_id: &str) {
+        let now = Instant::now();
+        for p in self.pages.iter_mut().filter(|p| p.state == PageState::Active) {
+            p.state = PageState::Background;
+            p.hidden_since.get_or_insert(now);
+        }
+        self.active_page_id = None;
+        self.empty_dest = Some(dest_id.to_string());
     }
 
     /// Whether a manual new tab (＋ / ⌘T / ⌘N) is allowed for `dest_id`.
@@ -197,10 +228,10 @@ impl WebViewTabManager {
         self.closed.len()
     }
 
-    /// Tabs of the active page's destination, in order.
+    /// Tabs of the selected destination, in order.
     pub fn active_dest_pages(&self) -> Vec<&PageInfo> {
-        match self.get_active_page() {
-            Some(a) => self.pages.iter().filter(|p| p.dest_id == a.dest_id).collect(),
+        match self.active_dest_id() {
+            Some(d) => self.pages.iter().filter(|p| p.dest_id == d).collect(),
             None => Vec::new(),
         }
     }
@@ -257,6 +288,7 @@ impl WebViewTabManager {
             }
         }
         self.active_page_id = Some(page_id.to_string());
+        self.empty_dest = None;
     }
 
     /// Panel hidden: every loaded page (including the active one) is now hidden.
@@ -396,7 +428,8 @@ impl WebViewTabManager {
     }
 
     /// Remove a page; when it was active, selection moves to its neighbour in
-    /// the same destination (right, else left), else the most recently viewed tab.
+    /// the same destination (right, else left). Closing a destination's last
+    /// tab keeps that destination selected with no page (the empty state).
     pub fn remove_page(&mut self, page_id: &str) -> Option<PageInfo> {
         let pos = self.pages.iter().position(|p| p.id == page_id)?;
         let dest = self.pages[pos].dest_id.clone();
@@ -407,10 +440,9 @@ impl WebViewTabManager {
                 .find(|p| p.dest_id == dest)
                 .or_else(|| self.pages[..pos].iter().rev().find(|p| p.dest_id == dest))
                 .map(|p| p.id.clone());
-            self.active_page_id = same_dest
-                .or_else(|| self.pages.iter().max_by_key(|p| p.last_viewed).map(|p| p.id.clone()));
-            if let Some(id) = self.active_page_id.clone() {
-                self.set_active(&id);
+            match same_dest {
+                Some(id) => self.set_active(&id),
+                None => self.select_empty_dest(&dest),
             }
         }
         Some(removed)
@@ -422,6 +454,14 @@ impl WebViewTabManager {
         self.pages = kept;
         // Closed tabs of a removed destination can no longer be reopened.
         self.closed.retain(|c| c.dest_id != dest_id);
+        let was_empty_here = self.empty_dest.as_deref() == Some(dest_id);
+        if was_empty_here {
+            self.empty_dest = None;
+            self.active_page_id = self.pages.iter().max_by_key(|p| p.last_viewed).map(|p| p.id.clone());
+            if let Some(id) = self.active_page_id.clone() {
+                self.set_active(&id);
+            }
+        }
         if let Some(ref active_id) = self.active_page_id {
             if !self.pages.iter().any(|p| &p.id == active_id) {
                 self.active_page_id = self.pages.iter().max_by_key(|p| p.last_viewed).map(|p| p.id.clone());
@@ -538,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn last_tab_of_destination_is_protected_and_blank_tabs_are_not_reopenable() {
+    fn last_tab_detection_and_blank_tabs_are_not_reopenable() {
         let mut m = WebViewTabManager::new();
         let a1 = open(&mut m, "a");
         let b1 = open(&mut m, "b");
@@ -572,6 +612,109 @@ mod tests {
         m.remove_page(&a3);
         assert_eq!(m.active_page_id.as_deref(), Some(a1.as_str()));
         m.remove_page(&a1);
+        // The last tab of "a" closed: "a" stays selected and empty.
+        assert_eq!(m.active_page_id, None);
+        assert_eq!(m.active_dest_id().as_deref(), Some("a"));
+        assert!(m.get_page(&b1).is_some());
+    }
+
+    #[test]
+    fn closing_the_last_tab_leaves_its_destination_selected_and_empty() {
+        let mut m = WebViewTabManager::new();
+        let b1 = open(&mut m, "b");
+        let a1 = open(&mut m, "a");
+        m.on_panel_shown();
+        m.set_active(&b1);
+        m.set_active(&a1);
+        assert!(m.is_last_in_dest(&a1));
+        let p = m.remove_page(&a1).unwrap();
+        m.push_closed(&p);
+        assert_eq!(m.active_page_id, None);
+        assert_eq!(m.empty_dest(), Some("a"));
+        assert_eq!(m.active_dest_id().as_deref(), Some("a"));
+        assert!(m.active_dest_pages().is_empty());
+        assert_eq!(m.count_for_dest("a"), 0);
+        // No page is Active; the other destination's tab is hidden, so it can unload.
+        assert!(m.pages.iter().all(|p| p.state != PageState::Active));
+        let due = m.due_for_unload(Instant::now() + Duration::from_secs(1000), Duration::from_secs(1), |_| false);
+        assert_eq!(due, vec![b1.clone()]);
+        assert_eq!(m.closed_count(), 1, "the closed last tab is reopenable");
+        assert!(m.can_open_manual("a"));
+    }
+
+    #[test]
+    fn reopening_after_closing_the_last_tab_restores_it_in_its_destination() {
+        let mut m = WebViewTabManager::new();
+        let a1 = open(&mut m, "a");
+        m.set_active(&a1);
+        m.update_meta(&a1, Some("Chat"), Some("https://a/c/42"));
+        let p = m.remove_page(&a1).unwrap();
+        m.push_closed(&p);
+        assert_eq!(m.empty_dest(), Some("a"));
+        let closed = m.pop_closed().unwrap();
+        assert_eq!(closed.dest_id, "a");
+        assert_eq!(closed.url, "https://a/c/42");
+        // lifecycle::reopen_closed opens a page at the closed URL and activates it.
+        let l = m.new_slot_label();
+        let (np, _) = m.create_page(&closed.dest_id, "A", "", &l, &closed.url, |_| false);
+        m.set_active(&np.id);
+        assert_eq!(m.empty_dest(), None);
+        assert_eq!(m.active_dest_id().as_deref(), Some("a"));
+        assert_eq!(m.get_active_page().unwrap().url, "https://a/c/42");
+    }
+
+    #[test]
+    fn routing_text_into_an_empty_destination_opens_a_tab_there() {
+        let mut m = WebViewTabManager::new();
+        let b1 = open(&mut m, "b");
+        m.set_active(&b1);
+        m.select_empty_dest("a");
+        assert_eq!(m.active_dest_id().as_deref(), Some("a"));
+        assert_eq!(m.get_page(&b1).unwrap().state, PageState::Background);
+        // A query (lifecycle::open_new_page) creates and activates a tab.
+        let l = m.new_slot_label();
+        let (np, ev) = m.create_page("a", "A", "", &l, "https://a", |_| false);
+        assert!(ev.is_none());
+        m.set_active(&np.id);
+        assert_eq!(m.empty_dest(), None);
+        assert_eq!(m.count_for_dest("a"), 1);
+        assert_eq!(m.active_page_id.as_deref(), Some(np.id.as_str()));
+    }
+
+    #[test]
+    fn selecting_an_empty_destination_creates_no_tab() {
+        let mut m = WebViewTabManager::new();
+        let b1 = open(&mut m, "b");
+        m.set_active(&b1);
+        let before = m.pages.len();
+        // lifecycle::switch_destination: no tab for "a" -> empty state.
+        assert!(m.last_viewed_for_dest("a").is_none());
+        m.select_empty_dest("a");
+        assert_eq!(m.pages.len(), before);
+        assert_eq!(m.active_page_id, None);
+        assert_eq!(m.active_dest_id().as_deref(), Some("a"));
+        assert_eq!(m.cycle_target(1), None);
+        // Selecting a destination with tabs leaves the empty state.
+        m.set_active(&b1);
+        assert_eq!(m.empty_dest(), None);
+    }
+
+    #[test]
+    fn removing_the_empty_destination_selects_the_most_recent_tab() {
+        let mut m = WebViewTabManager::new();
+        let b1 = open(&mut m, "b");
+        let a1 = open(&mut m, "a");
+        m.set_active(&b1);
+        m.set_active(&a1);
+        m.remove_page(&a1);
+        assert_eq!(m.empty_dest(), Some("a"));
+        // Removing another destination keeps "a" selected and empty.
+        let c1 = open(&mut m, "c");
+        m.remove_pages_for_dest("c");
+        assert!(m.get_page(&c1).is_none());
+        assert_eq!(m.empty_dest(), Some("a"));
+        m.remove_pages_for_dest("a");
+        assert_eq!(m.empty_dest(), None);
         assert_eq!(m.active_page_id.as_deref(), Some(b1.as_str()));
     }
 

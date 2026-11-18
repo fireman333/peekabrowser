@@ -183,7 +183,8 @@ pub fn new_tab(
     crate::lifecycle::open_manual_tab(&app, &dest).map(|_| ())
 }
 
-/// Open a new tab for the currently active destination (called from page viewer's Cmd+N).
+/// Open a new tab for the selected destination (page viewer's ⌘T / ⌘N, and the
+/// empty state's New tab button).
 #[tauri::command]
 pub fn new_tab_for_active(
     app: AppHandle,
@@ -192,8 +193,7 @@ pub fn new_tab_for_active(
 ) -> Result<(), String> {
     let dest_id = {
         let mgr = tab_manager.lock().map_err(|_| "Lock failed")?;
-        mgr.get_active_page()
-            .map(|p| p.dest_id.clone())
+        mgr.active_dest_id()
             .ok_or_else(|| tr("沒有開啟中的頁面", "No active page").to_string())?
     };
     new_tab(app, dest_manager, dest_id)
@@ -1513,7 +1513,7 @@ fn popup(app: &AppHandle, menu: tauri::menu::Menu<tauri::Wry>, at: Option<(f64, 
     Ok(())
 }
 
-/// The ⋯ menu: capture, width S/M/L, reopen closed tab, copy URL.
+/// The ⋯ menu: capture, width S/M/L, reopen closed tab, copy URL, close tab.
 #[tauri::command]
 pub fn show_chrome_menu(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>>, x: f64, y: f64) -> Result<(), String> {
     use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -1530,7 +1530,8 @@ pub fn show_chrome_menu(app: AppHandle, tab_manager: State<Mutex<WebViewTabManag
     let sep2 = PredefinedMenuItem::separator(&app).map_err(e)?;
     let reopen = MenuItem::with_id(&app, "chrome:reopen", tr("重新開啟關閉的分頁", "Reopen closed tab"), closed > 0, Some("CmdOrCtrl+Shift+T")).map_err(e)?;
     let copy = MenuItem::with_id(&app, "chrome:copy-url", tr("複製網址", "Copy URL"), has_page, None::<&str>).map_err(e)?;
-    let menu = Menu::with_items(&app, &[&capture, &sep1, &width, &sep2, &reopen, &copy]).map_err(e)?;
+    let close = MenuItem::with_id(&app, "chrome:close-tab", tr("關閉分頁", "Close tab"), has_page, Some("CmdOrCtrl+W")).map_err(e)?;
+    let menu = Menu::with_items(&app, &[&capture, &sep1, &width, &sep2, &reopen, &copy, &close]).map_err(e)?;
     popup(&app, menu, Some((x, y)))
 }
 
@@ -1542,7 +1543,7 @@ pub fn show_tab_menu(app: AppHandle, tab_manager: State<Mutex<WebViewTabManager>
         .lock()
         .map(|m| {
             (
-                !m.is_last_in_dest(&page_id),
+                m.get_page(&page_id).is_some(),
                 !m.sibling_ids(&page_id, false).is_empty(),
                 !m.sibling_ids(&page_id, true).is_empty(),
             )
@@ -1572,6 +1573,12 @@ pub fn handle_chrome_menu(app: &AppHandle, id: &str) {
         }
         "copy-url" => {
             let _ = copy_page_url(app.clone(), None);
+        }
+        "close-tab" => {
+            let id = mgr.lock().ok().and_then(|m| m.active_page_id.clone());
+            if let Some(id) = id {
+                crate::lifecycle::close_page(app, &id);
+            }
         }
         _ if rest.starts_with("width:") => {
             set_viewer_width(app.clone(), rest["width:".len()..].to_string());

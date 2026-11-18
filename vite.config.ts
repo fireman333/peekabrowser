@@ -33,6 +33,7 @@ export default defineConfig(async () => ({
         chrome: resolve(__dirname, "chrome.html"),
         highlight: resolve(__dirname, "highlight.html"),
         grip: resolve(__dirname, "grip.html"),
+        empty: resolve(__dirname, "empty.html"),
       },
     },
   },

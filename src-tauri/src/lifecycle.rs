@@ -61,9 +61,12 @@ fn unload_after(app: &AppHandle) -> Duration {
 pub fn emit_pages(app: &AppHandle, mgr: &WebViewTabManager) {
     let pages = mgr.get_all_pages();
     let active = mgr.active_page_id.clone().unwrap_or_default();
+    let active_dest = mgr.active_dest_id().unwrap_or_default();
     // `emit` is a broadcast: once reaches both the rail and the chrome.
     let _ = app.emit("pages-updated", &pages);
     let _ = app.emit("active-page-changed", &active);
+    // The rail selects by destination (an empty destination has no page).
+    let _ = app.emit("active-dest-changed", &active_dest);
     crate::panel::set_chrome_tab_row(app, mgr.active_dest_pages().len() >= 2);
 }
 
@@ -201,8 +204,8 @@ pub fn activate_page(app: &AppHandle, page_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Rail destination click: its most recently viewed tab, or a new one when it
-/// has none. Clicking the selected destination never opens another tab.
+/// Rail destination click: its most recently viewed tab, or the empty state
+/// ("No tabs" + New tab) when it has none. Never opens a tab by itself.
 pub fn switch_destination(app: &AppHandle, dest: &Destination) -> Result<(), String> {
     let existing = app
         .state::<Mgr>()
@@ -212,14 +215,29 @@ pub fn switch_destination(app: &AppHandle, dest: &Destination) -> Result<(), Str
         .map(|p| p.id.clone());
     match existing {
         Some(id) => activate_page(app, &id),
-        None => open_new_page(app, dest).map(|_| ()),
+        None => {
+            app.state::<Mgr>().lock().map_err(|_| "lock")?.select_empty_dest(&dest.id);
+            show_empty(app);
+            Ok(())
+        }
     }
+}
+
+/// Show the selected, tab-less destination's empty state in the viewer area.
+fn show_empty(app: &AppHandle) {
+    if let Ok(mgr) = app.state::<Mgr>().lock() {
+        crate::panel::prime_chrome_tab_row(false);
+        emit_pages(app, &mgr);
+    }
+    crate::panel::show_empty_state(app);
+    remember_hidden_state(app);
+    ensure_maintenance(app);
 }
 
 /// Close a page by id (user action). A viewer slot label (`page-N`, sent by
 /// the in-page ⌘W handler) is accepted too and resolved to the page it
-/// currently shows. The last tab of a destination is never closed; closed
-/// tabs go to the reopen stack.
+/// currently shows. Closing a destination's last tab leaves it selected and
+/// empty; closed tabs go to the reopen stack.
 pub fn close_page(app: &AppHandle, page_id: &str) {
     let page_id = {
         let mgr = app.state::<Mgr>();
@@ -236,15 +254,16 @@ pub fn close_page(app: &AppHandle, page_id: &str) {
     close_pages(app, &[page_id]);
 }
 
-/// Close several tabs at once (close others / close to the right), keeping at
-/// least one tab per destination, then show whatever is active afterwards.
+/// Close several tabs at once (close others / close to the right), then show
+/// whatever is active afterwards, or the empty state when the selected
+/// destination has no tab left.
 pub fn close_pages(app: &AppHandle, ids: &[String]) {
-    let (removed, next) = {
+    let (removed, next, empty) = {
         let mgr = app.state::<Mgr>();
         let Ok(mut mgr) = mgr.lock() else { return };
         let mut removed = Vec::new();
         for id in ids {
-            if mgr.get_page(id).is_none() || mgr.is_last_in_dest(id) {
+            if mgr.get_page(id).is_none() {
                 continue;
             }
             if let Some(p) = mgr.remove_page(id) {
@@ -252,7 +271,7 @@ pub fn close_pages(app: &AppHandle, ids: &[String]) {
                 removed.push(p);
             }
         }
-        (removed, mgr.active_page_id.clone())
+        (removed, mgr.active_page_id.clone(), mgr.empty_dest().is_some())
     };
     if removed.is_empty() {
         return;
@@ -260,6 +279,11 @@ pub fn close_pages(app: &AppHandle, ids: &[String]) {
     // Keep the chrome up while the closed page's slot is released and the
     // next page is shown (otherwise it blinks out and back in).
     crate::panel::hold_chrome(next.is_some());
+    // The last tab closed: put the empty state up first, so the closed page
+    // is swapped out under it instead of the column blinking empty.
+    if next.is_none() && empty {
+        show_empty(app);
+    }
     for p in removed {
         set_draft(&p.id, false);
         if let Some(l) = p.label {
@@ -270,6 +294,7 @@ pub fn close_pages(app: &AppHandle, ids: &[String]) {
         Some(id) => {
             let _ = activate_page(app, &id);
         }
+        None if empty => {}
         None => emit_now(app),
     }
     crate::panel::hold_chrome(false);
@@ -441,10 +466,13 @@ pub fn remove_pages_for_dest(app: &AppHandle, dest_id: &str) {
     let (removed, next) = {
         let mgr = app.state::<Mgr>();
         let Ok(mut mgr) = mgr.lock() else { return };
-        let had_active = mgr.get_active_page().map(|p| p.dest_id == dest_id).unwrap_or(false);
+        let had_active = mgr.active_dest_id().as_deref() == Some(dest_id);
         let removed = mgr.remove_pages_for_dest(dest_id);
         (removed, if had_active { mgr.active_page_id.clone() } else { None })
     };
+    if crate::panel::empty_state_shown() && app.state::<Mgr>().lock().map(|m| m.empty_dest().is_none()).unwrap_or(false) {
+        crate::panel::hide_empty_state(app);
+    }
     // Keep the chrome up while the closed page's slot is released and the
     // next page is shown (otherwise it blinks out and back in).
     crate::panel::hold_chrome(next.is_some());

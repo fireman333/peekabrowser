@@ -282,7 +282,7 @@ pub const PICKER_CORNER_RADIUS: f64 = 16.0;
 /// Sidebar alone → all corners; with a viewer beside it → only its left corners.
 pub fn update_sidebar_corners(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(SIDEBAR_LABEL) {
-        let mask = if get_active_page_label().is_some() {
+        let mask = if get_active_page_label().is_some() || empty_state_shown() {
             crate::native::corners::LEFT
         } else {
             crate::native::corners::ALL
@@ -460,8 +460,95 @@ pub fn sync_chrome(app: &AppHandle) {
                 p.order_out(None);
             }
         }
-        sync_grip(app, false);
+        // The empty state resizes like a page.
+        sync_grip(app, is_panel_visible(app) && empty_state_shown());
     }
+}
+
+// ─── Empty state (selected destination with no tabs) ────────────────────
+//
+// A local window in place of the page: "No tabs" + a New tab button. It
+// covers the whole viewer column (chrome row included) — the chrome is
+// hidden, since every control in it acts on a page. Created hidden at launch.
+
+pub const EMPTY_LABEL: &str = "empty";
+/// Whether the viewer column shows the empty state (kept while the panel is
+/// hidden, so showing the panel brings it back).
+static EMPTY_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn empty_state_shown() -> bool {
+    EMPTY_SHOWN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Frame of the empty state: the page's column, from the panel top (where
+/// the chrome would be) to the panel bottom.
+fn empty_frame() -> (f64, f64, f64, f64) {
+    let (px, _, vw, _) = page_frame();
+    let (panel_height, panel_y) = panel_geometry();
+    (px, panel_y, vw, panel_height)
+}
+
+pub fn create_empty_panel(app: &AppHandle) -> tauri::Result<()> {
+    let w = WebviewWindowBuilder::new(app, EMPTY_LABEL, WebviewUrl::App("empty.html".into()))
+        .title("Peekabrowser")
+        .inner_size(VIEWER_WIDTH, 400.0)
+        .position(-(TOTAL_WIDTH + 100.0), 0.0)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .build()?;
+    setup_panel(&w)?;
+    apply_material(app, &w, 0.0);
+    crate::native::set_rounded_corners(&w, PANEL_CORNER_RADIUS, crate::native::corners::RIGHT);
+    Ok(())
+}
+
+fn place_empty(app: &AppHandle) {
+    let (x, y, w, h) = empty_frame();
+    if let Some(win) = app.get_webview_window(EMPTY_LABEL) {
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+    }
+}
+
+/// Show the empty state in place of the page: every page window is ordered
+/// out (and stays loaded), the chrome hides, the grip stays.
+pub fn show_empty_state(app: &AppHandle) {
+    EMPTY_SHOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut guard) = ACTIVE_PAGE_LABEL.lock() {
+        *guard = None;
+    }
+    let labels: Vec<String> = ALL_PAGE_LABELS.lock().map(|g| g.clone()).unwrap_or_default();
+    for label in &labels {
+        if let Ok(p) = app.get_webview_panel(label) {
+            p.order_out(None);
+        }
+        if let Some(w) = app.get_webview_window(label) {
+            crate::native::set_media_suspended(&w, true);
+        }
+    }
+    place_empty(app);
+    if is_panel_visible(app) {
+        if let Ok(p) = app.get_webview_panel(EMPTY_LABEL) {
+            p.show();
+        }
+    }
+    sync_chrome(app);
+    update_sidebar_corners(app);
+}
+
+/// Leave the empty state (a page is shown, or no destination is selected).
+pub fn hide_empty_state(app: &AppHandle) {
+    if !EMPTY_SHOWN.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    if let Ok(p) = app.get_webview_panel(EMPTY_LABEL) {
+        p.order_out(None);
+    }
+    sync_chrome(app);
+    update_sidebar_corners(app);
 }
 
 // ─── Resize grip (iPadOS-style arc on the bottom-right corner) ──────────
@@ -526,7 +613,8 @@ pub fn note_cursor_for_grip(app: &AppHandle, cx: f64, cy: f64) {
     use tauri::Emitter;
     let (_, _, right, bottom) = panel_bounds();
     let dragging = GRIP_DRAG_START.lock().map(|g| g.is_some()).unwrap_or(false);
-    let near = dragging || (get_active_page_label().is_some() && grip_is_near((cx, cy), (right, bottom)));
+    let has_content = get_active_page_label().is_some() || empty_state_shown();
+    let near = dragging || (has_content && grip_is_near((cx, cy), (right, bottom)));
     if GRIP_NEAR.swap(near, Ordering::SeqCst) != near {
         let _ = app.emit_to(GRIP_LABEL, "grip-near", near);
     }
@@ -789,6 +877,8 @@ pub fn show_page_viewer(app: &AppHandle, label: &str) {
             p.show();
         }
     }
+    // After the page is up, so the column never blinks empty.
+    hide_empty_state(app);
 
     update_sidebar_corners(app);
 }
@@ -1116,6 +1206,11 @@ fn show_panel_inner(app: &AppHandle) {
         if let Ok(p) = app.get_webview_panel(&label) {
             p.show();
         }
+    } else if empty_state_shown() {
+        place_empty(app);
+        if let Ok(p) = app.get_webview_panel(EMPTY_LABEL) {
+            p.show();
+        }
     }
 
     crate::lifecycle::on_panel_shown(app);
@@ -1136,6 +1231,9 @@ pub fn hide_panel(app: &AppHandle) {
         let _ = w.set_position(tauri::LogicalPosition::new(-9999.0, 0.0));
     }
     sync_chrome(app);
+    if let Ok(p) = app.get_webview_panel(EMPTY_LABEL) {
+        p.order_out(None);
+    }
 
     // Hide all page viewers via order_out (don't move off-screen —
     // moving to -9999 causes WebKit to kill streaming connections).
@@ -1299,6 +1397,9 @@ pub fn resize_panels(app: &AppHandle, viewer_width: f64) {
             let _ = w.set_size(tauri::LogicalSize::new(viewer_width, page_height));
             let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         }
+    }
+    if empty_state_shown() {
+        place_empty(app);
     }
 }
 

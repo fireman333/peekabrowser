@@ -92,6 +92,7 @@ pub fn run() {
             // its native menus (⋯, tab right-click).
             panel::create_chrome_panel(&handle)?;
             panel::create_grip_panel(&handle)?;
+            panel::create_empty_panel(&handle)?;
             handle.on_menu_event(|app, event| commands::handle_chrome_menu(app, event.id().as_ref()));
 
             // Create the floating destination picker popup
@@ -145,7 +146,7 @@ pub fn run() {
                     let _ = h.run_on_main_thread(move || {
                         panel::show_panel(&h2);
                         if let Some(d) = h2.state::<destinations::DestinationManager>().get_all().into_iter().next() {
-                            let _ = lifecycle::switch_destination(&h2, &d);
+                            let _ = lifecycle::open_new_page(&h2, &d);
                         }
                     });
                 });
