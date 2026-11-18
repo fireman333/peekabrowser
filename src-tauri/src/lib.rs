@@ -170,6 +170,7 @@ pub fn run() {
             commands::hide_picker_panel,
             commands::open_settings_url,
             commands::regrant_accessibility,
+            commands::open_trackpad_settings, // settings agent
             commands::open_settings_window,
             commands::get_pages,
             commands::switch_page,

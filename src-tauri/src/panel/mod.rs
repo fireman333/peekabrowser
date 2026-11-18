@@ -265,8 +265,8 @@ pub fn update_sidebar_corners(app: &AppHandle) {
 }
 pub const PICKER_LABEL: &str = "picker";
 
-const PICKER_WIDTH: f64 = 210.0;
-const PICKER_HEIGHT: f64 = 360.0;
+const PICKER_WIDTH: f64 = 248.0;
+const PICKER_HEIGHT: f64 = 420.0;
 
 /// Width of the tab bar (sidebar UI panel)
 pub const TAB_BAR_WIDTH: f64 = 56.0;

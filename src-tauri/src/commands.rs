@@ -819,8 +819,8 @@ pub fn open_settings_window(app: AppHandle) {
     }
 
     let (screen_w, screen_h) = crate::panel::get_primary_screen_size();
-    let win_w = 560.0_f64;
-    let win_h = 640.0_f64;
+    let win_w = 600.0_f64;
+    let win_h = 720.0_f64;
     let x = (screen_w - win_w) / 2.0;
     let y = (screen_h - win_h) / 2.0;
 
@@ -1263,5 +1263,18 @@ pub fn open_release_page() -> Result<(), String> {
         .filter(|u| u.starts_with("https://github.com/"))
         .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", crate::updater::REPO));
     std::process::Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Open System Settings -> Trackpad (to turn off "Look up & data detectors").
+#[tauri::command]
+pub fn open_trackpad_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.Trackpad-Settings.extension")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
