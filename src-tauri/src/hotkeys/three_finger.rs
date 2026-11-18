@@ -111,6 +111,15 @@ impl TapDetector {
             && self.last_fire.is_none_or(|last| g.start - last >= DEBOUNCE);
         if ok {
             self.last_fire = Some(t);
+        } else {
+            log::info!(
+                "three-finger: rejected gesture (max_fingers={}, spread={:.0}ms, duration={:.0}ms, move={:.3}, bad_pos={})",
+                g.max_count,
+                (three_at - g.start) * 1000.0,
+                (t - g.start) * 1000.0,
+                g.max_move,
+                g.bad_positions
+            );
         }
         ok
     }

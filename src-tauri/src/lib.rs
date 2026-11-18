@@ -28,7 +28,7 @@ pub use delivery::PickerState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    init_logging();
 
     // Resolve app data directory for persistent storage
     let app_data_dir = if let Some(home) = std::env::var_os("HOME") {
@@ -95,6 +95,7 @@ pub fn run() {
 
             // Create the floating destination picker popup
             panel::create_picker_panel(&handle)?;
+            panel::lookup_highlight::create(&handle)?; // three-finger lookup highlight
             picker_keys::install(&handle);
 
             // Setup system tray
@@ -324,4 +325,25 @@ mod acl_tests {
         let caps = include_str!("../capabilities/pages.json");
         assert!(!caps.contains("core:") && !caps.contains("local-windows"), "pages must not get core/plugin/app-wide permissions");
     }
+}
+
+/// Log to ~/Library/Logs/Peekabrowser/peekabrowser.log (info by default,
+/// RUST_LOG overrides) so problems in the installed app can be diagnosed.
+/// Falls back to stderr if the file can't be opened.
+fn init_logging() {
+    let mut b = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("peekabrowser_lib=info,peekabrowser=info"));
+    if let Some(home) = std::env::var_os("HOME") {
+        let dir = std::path::PathBuf::from(home).join("Library/Logs/Peekabrowser");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("peekabrowser.log");
+        // Start fresh when the log grows past 5 MB.
+        if std::fs::metadata(&path).map(|m| m.len() > 5 * 1024 * 1024).unwrap_or(false) {
+            let _ = std::fs::rename(&path, dir.join("peekabrowser.old.log"));
+        }
+        if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            b.target(env_logger::Target::Pipe(Box::new(f)));
+        }
+    }
+    b.format_timestamp_millis();
+    let _ = b.try_init();
 }

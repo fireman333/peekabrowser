@@ -5,6 +5,17 @@
 //!    when the tap lands on that selection (`AXBoundsForRange` of
 //!    `AXSelectedTextRange`, with a small tolerance) and the element under the
 //!    cursor belongs to the frontmost app. Like the system Look Up gesture.
+//! W. WebKit web content (Safari, Mail, WKWebView apps): when the element
+//!    under the cursor sits inside an `AXWebArea`, WebKit's opaque text
+//!    markers are used instead of character ranges (web content implements
+//!    neither `AXRangeForPosition` nor `AXSelectedTextRange`):
+//!    a. `AXSelectedTextMarkerRange` of the web area, only when the tap lands
+//!       on it (`AXBoundsForTextMarkerRange`, same tolerance as tier 1);
+//!    b. `AXTextMarkerForPosition` → the character under the point →
+//!       `AXRight/LeftWordTextMarkerRangeForTextMarker` → the candidate whose
+//!       bounds contain the point; long CJK runs are narrowed with
+//!       `CFStringTokenizer`. Chromium also answers these when its AX tree is
+//!       on (we never set `AXEnhancedUserInterface`); otherwise tier 3 covers it.
 //! 2. The word under the cursor: `AXUIElementCopyElementAtPosition` →
 //!    `AXRangeForPosition` → `AXStringForRange` on a small window around that
 //!    index → word boundaries from `CFStringTokenizer` (handles CJK too).
@@ -35,6 +46,10 @@ pub enum Tier {
     Selection,
     /// The word under the cursor.
     WordAtCursor,
+    /// Selection in WebKit web content (text-marker range under the tap).
+    WebSelection,
+    /// The word under the cursor in WebKit web content (text markers).
+    WebWord,
     /// Synthetic ⌘C: what the app chose to copy, possibly not what was pointed at.
     SyntheticCopy,
 }
@@ -44,6 +59,8 @@ impl Tier {
         match self {
             Tier::Selection => "AXSelectedText",
             Tier::WordAtCursor => "AXRangeForPosition",
+            Tier::WebSelection => "AXSelectedTextMarkerRange",
+            Tier::WebWord => "AXTextMarkerForPosition",
             Tier::SyntheticCopy => "synthetic ⌘C",
         }
     }
@@ -61,6 +78,11 @@ pub struct Capture {
     pub tier: Tier,
     /// Name of the app that owns the text, if known.
     pub source_app: Option<String>,
+    /// On-screen bounds of the captured text (x, y, w, h in global top-left
+    /// points, the AX coordinate space), when the tier can tell cheaply.
+    /// `None` for synthetic ⌘C. For a CJK run narrowed by the tokenizer this
+    /// is the bounds of the whole run WebKit reported.
+    pub bounds: Option<(f64, f64, f64, f64)>,
 }
 
 /// Longest text taken from a selection (the picker/destinations cap anyway).
@@ -79,6 +101,12 @@ pub struct Rect {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+}
+
+impl Rect {
+    pub fn tuple(self) -> (f64, f64, f64, f64) {
+        (self.x, self.y, self.w, self.h)
+    }
 }
 
 /// Whether (`px`, `py`) lies inside `r` grown by `tol` on every side.
@@ -101,40 +129,142 @@ pub fn is_ax_poor_bundle<S: AsRef<str>>(framework_names: &[S]) -> bool {
     })
 }
 
+/// Whether `s` contains Han, kana or Hangul (scripts written without spaces).
+pub fn has_cjk(s: &str) -> bool {
+    s.chars().any(|c| {
+        matches!(c as u32,
+            0x3040..=0x30FF      // Hiragana, Katakana
+            | 0x3400..=0x4DBF    // CJK Extension A
+            | 0x4E00..=0x9FFF    // CJK Unified Ideographs
+            | 0xAC00..=0xD7AF    // Hangul syllables
+            | 0xF900..=0xFAFF    // CJK Compatibility Ideographs
+            | 0x20000..=0x2FA1F) // CJK Extensions B+
+    })
+}
+
+/// Of the word candidates WebKit offers around a point (right word first),
+/// the one the point is on: a candidate whose bounds contain the point wins;
+/// if no candidate has readable bounds at all, the first real word.
+/// Blank / punctuation-only candidates never count.
+pub fn pick_web_word(cands: &[(String, Option<Rect>)], x: f64, y: f64) -> Option<String> {
+    const TOL: f64 = 1.0;
+    let real = |s: &String| s.chars().any(char::is_alphanumeric);
+    if let Some((w, _)) = cands.iter().find(|(w, b)| real(w) && b.is_some_and(|b| point_near_rect(b, x, y, TOL))) {
+        return clean(w);
+    }
+    if cands.iter().all(|(_, b)| b.is_none()) {
+        return cands.iter().find(|(w, _)| real(w)).and_then(|(w, _)| clean(w));
+    }
+    None
+}
+
+/// WebKit can hand back a whole CJK run as one "word". Narrow it to the
+/// dictionary word around UTF-16 offset `offset` (the character under the
+/// cursor). Non-CJK words, or an unknown offset, are returned unchanged.
+#[cfg(target_os = "macos")]
+pub fn narrow_web_word(word: &str, offset: Option<usize>) -> String {
+    const SHORT: usize = 4;
+    let Some(off) = offset else { return word.to_string() };
+    if !has_cjk(word) || word.chars().count() <= SHORT {
+        return word.to_string();
+    }
+    let len = word.encode_utf16().count();
+    word_at_utf16(word, off.min(len.saturating_sub(1))).unwrap_or_else(|| word.to_string())
+}
+
 /// `x`, `y`: cursor in global top-left-origin points (same space as AX).
 /// `copy_keycode` is only called when tier 3 runs (see [`copy_keycode`]).
+/// Logs one info line per call with every tier tried and why it failed.
 #[cfg(target_os = "macos")]
 pub fn capture_text_at(x: f64, y: f64, copy_keycode: impl FnOnce() -> u16) -> Option<Capture> {
+    let mut trace: Vec<String> = Vec::new();
+    let out = capture_traced(x, y, copy_keycode, &mut trace);
+    log::info!(
+        "lookup at ({:.0}, {:.0}): {} [{}]",
+        x,
+        y,
+        out.as_ref().map(|c| format!("got {} chars via {}", c.text.chars().count(), c.tier.label())).unwrap_or_else(|| "nothing".into()),
+        trace.join("; ")
+    );
+    out
+}
+
+#[cfg(target_os = "macos")]
+fn capture_traced(x: f64, y: f64, copy_keycode: impl FnOnce() -> u16, trace: &mut Vec<String>) -> Option<Capture> {
     let own_pid = std::process::id() as i32;
     let hit = ax::element_at(x, y);
     let hit_pid = hit.as_ref().and_then(ax::pid_of);
+    let role = hit.as_ref().and_then(ax::role_of);
+    trace.push(format!(
+        "hit role={} pid={} bundle={}",
+        role.as_deref().unwrap_or(if hit.is_some() { "?" } else { "none (no element at point)" }),
+        hit_pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
+        hit_pid.and_then(bundle_id).unwrap_or_else(|| "?".into())
+    ));
     if hit_pid == Some(own_pid) {
-        log::info!("lookup: cursor is over Peekabrowser itself; ignored");
+        trace.push("cursor is over Peekabrowser itself; ignored".into());
         return None;
     }
     let front = frontmost_pid().filter(|p| *p != own_pid);
     // The cursor is over the app that owns the focus (and so any selection).
     let on_front = front.filter(|f| hit_pid == Some(*f));
+    if on_front.is_none() {
+        trace.push(format!("not over frontmost app (front pid={:?}): selection tiers skipped", front));
+    }
     let sel = on_front.and_then(ax::selection);
 
     // 1. Existing selection, only when the tap is on it.
-    if let (Some(pid), Some(s)) = (on_front, sel.as_ref()) {
-        if let (Some(text), Some(b)) = (s.text.as_ref(), s.bounds) {
-            if point_near_rect(b, x, y, SELECTION_TOLERANCE) {
-                return Some(Capture { text: text.clone(), tier: Tier::Selection, source_app: app_name(pid) });
+    match (on_front, sel.as_ref()) {
+        (Some(pid), Some(s)) => match (s.text.as_ref(), s.bounds) {
+            (Some(text), Some(b)) if point_near_rect(b, x, y, SELECTION_TOLERANCE) => {
+                let bounds = Some(b.tuple());
+                return Some(Capture { text: text.clone(), tier: Tier::Selection, source_app: app_name(pid), bounds });
+            }
+            (Some(_), Some(_)) => trace.push("T1 AXSelectedText: tap is off the selection".into()),
+            (Some(_), None) => trace.push("T1 AXSelectedText: selection has no AXBoundsForRange".into()),
+            (None, _) => trace.push(format!("T1 AXSelectedText: none (AXSelectedTextRange len={:?})", s.length)),
+        },
+        (Some(_), None) => trace.push("T1 AXSelectedText: no focused element".into()),
+        _ => {}
+    }
+    // W. WebKit web content (text markers).
+    match hit.as_ref().and_then(ax::web_area_of) {
+        None => trace.push("TW web: no AXWebArea ancestor".into()),
+        Some(web) => {
+            trace.push("TW web: AXWebArea found".into());
+            if on_front.is_some() {
+                match ax::web_selection(&web) {
+                    Some((text, Some(b))) if point_near_rect(b, x, y, SELECTION_TOLERANCE) => {
+                        let (tier, source_app, bounds) = (Tier::WebSelection, hit_pid.and_then(app_name), Some(b.tuple()));
+                        return Some(Capture { text, tier, source_app, bounds });
+                    }
+                    Some((_, Some(_))) => trace.push("TWs selection: tap is off it".into()),
+                    Some((_, None)) => trace.push("TWs selection: no AXBoundsForTextMarkerRange".into()),
+                    None => trace.push("TWs selection: none".into()),
+                }
+            }
+            match ax::web_word_at(&web, x, y) {
+                Ok((text, b)) => {
+                    let (tier, source_app, bounds) = (Tier::WebWord, hit_pid.and_then(app_name), b.map(Rect::tuple));
+                    return Some(Capture { text, tier, source_app, bounds });
+                }
+                Err(why) => trace.push(format!("TWw word: {why}")),
             }
         }
     }
     // 2. Word under the cursor.
     if let Some(el) = hit.as_ref() {
-        if let Some(text) = ax::word_at_position(el, x, y) {
+        if let Some((text, b)) = ax::word_at_position(el, x, y) {
             let source_app = hit_pid.and_then(app_name);
-            return Some(Capture { text, tier: Tier::WordAtCursor, source_app });
+            return Some(Capture { text, tier: Tier::WordAtCursor, source_app, bounds: b.map(Rect::tuple) });
         }
+        trace.push("T2 AXRangeForPosition: no word (unsupported or on whitespace)".into());
     }
     // 1b. No word there: fall back to the selection in the same app.
-    if let (Some(pid), Some(text)) = (on_front, sel.as_ref().and_then(|s| s.text.clone())) {
-        return Some(Capture { text, tier: Tier::Selection, source_app: app_name(pid) });
+    if let (Some(pid), Some(s)) = (on_front, sel.as_ref()) {
+        if let Some(text) = s.text.clone() {
+            return Some(Capture { text, tier: Tier::Selection, source_app: app_name(pid), bounds: s.bounds.map(Rect::tuple) });
+        }
     }
     // 3. Synthetic ⌘C, gated (see the module docs).
     let pid = on_front?;
@@ -143,11 +273,30 @@ pub fn capture_text_at(x: f64, y: f64, copy_keycode: impl FnOnce() -> u16) -> Op
         None => is_ax_poor_app(pid),
     };
     if !allowed {
-        log::info!("lookup: no AX-confirmed selection in the frontmost app; synthetic copy skipped");
+        trace.push("T3 ⌘C: skipped (no AX-confirmed selection, not an Electron/Chromium bundle)".into());
         return None;
     }
-    let text = pasteboard::copy_selection_via_cmd_c(copy_keycode())?;
-    Some(Capture { text, tier: Tier::SyntheticCopy, source_app: app_name(pid) })
+    let Some(text) = pasteboard::copy_selection_via_cmd_c(copy_keycode()) else {
+        trace.push("T3 ⌘C: pasteboard unchanged or empty".into());
+        return None;
+    };
+    Some(Capture { text, tier: Tier::SyntheticCopy, source_app: app_name(pid), bounds: None })
+}
+
+#[cfg(target_os = "macos")]
+fn bundle_id(pid: i32) -> Option<String> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::NSString;
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let cls = AnyClass::get(c"NSRunningApplication")?;
+        let app: *mut AnyObject = msg_send![cls, runningApplicationWithProcessIdentifier: pid];
+        if app.is_null() {
+            return None;
+        }
+        let id: *mut AnyObject = msg_send![app, bundleIdentifier];
+        (!id.is_null()).then(|| (*(id as *const NSString)).to_string())
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -314,6 +463,12 @@ fn app_name(pid: i32) -> Option<String> {
 /// `None` if `idx` is on whitespace or punctuation.
 #[cfg(target_os = "macos")]
 pub fn word_at_utf16(s: &str, idx: usize) -> Option<String> {
+    word_range_at_utf16(s, idx).map(|(w, _, _)| w)
+}
+
+/// Like [`word_at_utf16`], plus the word's UTF-16 start and length in `s`.
+#[cfg(target_os = "macos")]
+pub fn word_range_at_utf16(s: &str, idx: usize) -> Option<(String, usize, usize)> {
     use core_foundation::base::{CFRange, TCFType};
     use core_foundation::string::{CFString, CFStringRef};
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -359,14 +514,15 @@ pub fn word_at_utf16(s: &str, idx: usize) -> Option<String> {
         if !word.chars().any(char::is_alphanumeric) {
             return None;
         }
-        clean(&word)
+        clean(&word).map(|w| (w, a, b - a))
     }
 }
 
 #[cfg(target_os = "macos")]
 mod ax {
     //! Minimal raw Accessibility FFI (ApplicationServices / HIServices).
-    use super::{clean, word_at_utf16, Rect, AX_TIMEOUT_SECS};
+    use super::{clean, narrow_web_word, pick_web_word, point_near_rect, word_range_at_utf16, Rect, AX_TIMEOUT_SECS};
+    use core_foundation::array::CFArray;
     use core_foundation::base::{CFRange, CFType, CFTypeRef, TCFType};
     use core_foundation::number::CFNumber;
     use core_foundation::string::{CFString, CFStringRef};
@@ -379,6 +535,8 @@ mod ax {
     const AX_VALUE_CFRANGE: u32 = 4;
     /// Characters fetched on each side of the hit index.
     const WINDOW: isize = 64;
+    /// How many `AXParent` steps to climb looking for an `AXWebArea`.
+    const WEB_AREA_DEPTH: usize = 12;
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -528,7 +686,7 @@ mod ax {
 
     /// Tier 2: the word under (x, y) in `hit` or one of its first ancestors
     /// (text views often answer for their static-text children).
-    pub fn word_at_position(hit: &Element, x: f64, y: f64) -> Option<String> {
+    pub fn word_at_position(hit: &Element, x: f64, y: f64) -> Option<(String, Option<Rect>)> {
         let point = CGPoint { x, y };
         let point = unsafe {
             CFType::wrap_under_create_rule(AXValueCreate(AX_VALUE_CGPOINT, &point as *const CGPoint as *const c_void))
@@ -545,7 +703,125 @@ mod ax {
         None
     }
 
-    fn word_in(el: &Element, point: &CFType) -> Option<String> {
+    pub fn role_of(el: &Element) -> Option<String> {
+        attr(el, "AXRole").and_then(|v| string_of(&v))
+    }
+
+    /// `hit` or its nearest ancestor with role `AXWebArea` (WebKit web content).
+    pub fn web_area_of(hit: &Element) -> Option<Element> {
+        let mut cur: Option<Element> = None;
+        for _ in 0..=WEB_AREA_DEPTH {
+            let el = cur.as_ref().unwrap_or(hit);
+            if role_of(el).as_deref() == Some("AXWebArea") {
+                return Some(match cur {
+                    Some(e) => e,
+                    None => Element(hit.0.clone()),
+                });
+            }
+            cur = Some(element_attr(el, "AXParent")?);
+        }
+        None
+    }
+
+    fn point_value(x: f64, y: f64) -> CFType {
+        let p = CGPoint { x, y };
+        unsafe { CFType::wrap_under_create_rule(AXValueCreate(AX_VALUE_CGPOINT, &p as *const CGPoint as *const c_void)) }
+    }
+
+    // Text markers (AXTextMarkerRef / AXTextMarkerRangeRef) are opaque CF
+    // objects: kept as owned `CFType`s and passed back unchanged.
+
+    fn marker_string(web: &Element, range: &CFType) -> Option<String> {
+        param_attr(web, "AXStringForTextMarkerRange", range).and_then(|v| string_of(&v))
+    }
+
+    fn marker_bounds(web: &Element, range: &CFType) -> Option<Rect> {
+        param_attr(web, "AXBoundsForTextMarkerRange", range).and_then(|v| rect_of(&v))
+    }
+
+    /// Range between two markers, in either order.
+    fn marker_range(web: &Element, a: &CFType, b: &CFType) -> Option<CFType> {
+        let pair = CFArray::from_CFTypes(&[a.clone(), b.clone()]);
+        param_attr(web, "AXTextMarkerRangeForUnorderedTextMarkers", &pair.as_CFType())
+    }
+
+    /// The web area's selection (cleaned text, bounds); `None` if empty.
+    pub fn web_selection(web: &Element) -> Option<(String, Option<Rect>)> {
+        let range = attr(web, "AXSelectedTextMarkerRange")?;
+        let text = clean(&marker_string(web, &range)?)?;
+        Some((text, marker_bounds(web, &range)))
+    }
+
+    /// Tier W: the word under (x, y) in web area `web`, or why there is none.
+    /// A point in the 1–2 pt gap between two blocks makes WebKit resolve the
+    /// marker somewhere unrelated (rejected by the bounds check), so small
+    /// vertical nudges are tried too.
+    pub fn web_word_at(web: &Element, x: f64, y: f64) -> Result<(String, Option<Rect>), String> {
+        let mut first_err = None;
+        for dy in [0.0, 3.0, -3.0] {
+            match web_word_at_exact(web, x, y + dy) {
+                Ok(w) => return Ok(w),
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        Err(first_err.unwrap_or_default())
+    }
+
+    fn web_word_at_exact(web: &Element, x: f64, y: f64) -> Result<(String, Option<Rect>), String> {
+        let at = param_attr(web, "AXTextMarkerForPosition", &point_value(x, y))
+            .ok_or("AXTextMarkerForPosition unsupported or no text here")?;
+        // The marker is the caret position nearest the point, which may sit
+        // after the character under it: pick the marker that starts it.
+        let on_point = |a: &CFType, b: &CFType| {
+            marker_range(web, a, b).and_then(|r| marker_bounds(web, &r)).is_some_and(|r| point_near_rect(r, x, y, 0.5))
+        };
+        let next = param_attr(web, "AXNextTextMarkerForTextMarker", &at);
+        let prev = param_attr(web, "AXPreviousTextMarkerForTextMarker", &at);
+        let ch = if next.as_ref().is_some_and(|n| on_point(&at, n)) {
+            at
+        } else if prev.as_ref().is_some_and(|p| on_point(p, &at)) {
+            prev.unwrap()
+        } else {
+            at
+        };
+        let mut cands: Vec<(String, Option<Rect>, CFType)> = Vec::new();
+        for name in ["AXRightWordTextMarkerRangeForTextMarker", "AXLeftWordTextMarkerRangeForTextMarker"] {
+            if let Some(r) = param_attr(web, name, &ch) {
+                if let Some(s) = marker_string(web, &r) {
+                    let b = marker_bounds(web, &r);
+                    cands.push((s, b, r));
+                }
+            }
+        }
+        if cands.is_empty() {
+            return Err("no word ranges for the marker".into());
+        }
+        let plain: Vec<(String, Option<Rect>)> = cands.iter().map(|(s, b, _)| (s.clone(), *b)).collect();
+        let Some(word) = pick_web_word(&plain, x, y) else {
+            let seen: Vec<String> = plain.iter().map(|(s, b)| format!("{:?}@{:?}", s, b.map(|r| (r.x as i64, r.y as i64, r.w as i64, r.h as i64)))).collect();
+            return Err(format!("no candidate word under the point (candidates {})", seen.join(", ")));
+        };
+        let chosen = cands.iter().find(|(s, _, _)| s.trim() == word);
+        let bounds = chosen.and_then(|(_, b, _)| *b);
+        // UTF-16 offset of the character under the cursor inside the word
+        // (only needed to narrow long CJK runs).
+        let offset = if super::has_cjk(&word) {
+            chosen
+                .and_then(|(s, _, r)| {
+                    let start = param_attr(web, "AXStartTextMarkerForTextMarkerRange", r)?;
+                    let lead = marker_string(web, &marker_range(web, &start, &ch)?)?;
+                    let skipped = s.encode_utf16().count() - s.trim_start().encode_utf16().count();
+                    lead.encode_utf16().count().checked_sub(skipped)
+                })
+        } else {
+            None
+        };
+        Ok((narrow_web_word(&word, offset), bounds))
+    }
+
+    fn word_in(el: &Element, point: &CFType) -> Option<(String, Option<Rect>)> {
         let hit = range_of(&param_attr(el, "AXRangeForPosition", point)?)?;
         if hit.location < 0 {
             return None;
@@ -563,7 +839,10 @@ mod ax {
             return None;
         }
         let text = string_of(&param_attr(el, "AXStringForRange", &range_value(CFRange::init(start, end - start)))?)?;
-        word_at_utf16(&text, (hit.location - start) as usize)
+        let (word, a, len) = word_range_at_utf16(&text, (hit.location - start) as usize)?;
+        let range = range_value(CFRange::init(start + a as isize, len as isize));
+        let bounds = param_attr(el, "AXBoundsForRange", &range).and_then(|v| rect_of(&v));
+        Some((word, bounds))
     }
 }
 
@@ -771,6 +1050,13 @@ mod tests {
     }
 
     #[test]
+    fn word_range_reports_utf16_span() {
+        assert_eq!(word_range_at_utf16("The quick", 6), Some(("quick".to_string(), 4, 5)));
+        // After an emoji (2 UTF-16 units) the start is in UTF-16 units.
+        assert_eq!(word_range_at_utf16("😀 hello", 4), Some(("hello".to_string(), 3, 5)));
+    }
+
+    #[test]
     fn cjk_gives_a_word_not_the_whole_run() {
         let s = "我今天去醫院看病";
         let w = word_at_utf16(s, 4).expect("a word");
@@ -827,6 +1113,105 @@ mod tests {
         assert!(Tier::SyntheticCopy.must_choose());
         assert!(!Tier::Selection.must_choose());
         assert!(!Tier::WordAtCursor.must_choose());
+    }
+
+    #[test]
+    fn web_tiers_never_force_the_picker() {
+        assert!(!Tier::WebWord.must_choose());
+        assert!(!Tier::WebSelection.must_choose());
+    }
+
+    #[test]
+    fn has_cjk_detects_scripts() {
+        assert!(has_cjk("醫院"));
+        assert!(has_cjk("カタカナ"));
+        assert!(has_cjk("한국어"));
+        assert!(has_cjk("heart 心臟"));
+        assert!(!has_cjk("heart"));
+        assert!(!has_cjk("café – naïve"));
+    }
+
+    fn r(x: f64, y: f64, w: f64, h: f64) -> Option<Rect> {
+        Some(Rect { x, y, w, h })
+    }
+
+    #[test]
+    fn pick_web_word_prefers_the_candidate_under_the_point() {
+        // Point at x=130: on "heart" (left word), not on "pumps" (right word).
+        let c = vec![("pumps".to_string(), r(150.0, 10.0, 40.0, 16.0)), ("heart".to_string(), r(110.0, 10.0, 36.0, 16.0))];
+        assert_eq!(pick_web_word(&c, 130.0, 18.0).as_deref(), Some("heart"));
+        assert_eq!(pick_web_word(&c, 160.0, 18.0).as_deref(), Some("pumps"));
+    }
+
+    #[test]
+    fn pick_web_word_rejects_blank_and_off_text_points() {
+        let c = vec![(" ".to_string(), r(146.0, 10.0, 4.0, 16.0)), ("heart".to_string(), r(110.0, 10.0, 36.0, 16.0))];
+        // On the space between words: no word.
+        assert_eq!(pick_web_word(&c, 148.0, 18.0), None);
+        // Far below the line (tap in a margin): no word.
+        assert_eq!(pick_web_word(&c, 120.0, 80.0), None);
+        // Punctuation only never counts.
+        let p = vec![("—".to_string(), r(100.0, 10.0, 10.0, 16.0))];
+        assert_eq!(pick_web_word(&p, 105.0, 18.0), None);
+    }
+
+    #[test]
+    fn pick_web_word_without_bounds_takes_first_real_word() {
+        let c = vec![(" ".to_string(), None), (" heart ".to_string(), None)];
+        assert_eq!(pick_web_word(&c, 0.0, 0.0).as_deref(), Some("heart"));
+        assert_eq!(pick_web_word(&[], 0.0, 0.0), None);
+    }
+
+    #[test]
+    fn narrow_web_word_splits_long_cjk_runs_only() {
+        let run = "我今天去醫院看病";
+        let w = narrow_web_word(run, Some(4));
+        assert!(w.chars().count() < run.chars().count() && run.contains(&w), "got {w}");
+        // Offset past the end is clamped, not dropped.
+        let tail = narrow_web_word(run, Some(99));
+        assert!(run.ends_with(&tail), "got {tail}");
+        // Short CJK words, Latin words and unknown offsets are kept whole.
+        assert_eq!(narrow_web_word("醫院", Some(1)), "醫院");
+        assert_eq!(narrow_web_word("cardiomyopathy", Some(3)), "cardiomyopathy");
+        assert_eq!(narrow_web_word(run, None), run);
+    }
+
+    /// Real check against whatever app is under the mouse (e.g. Safari):
+    /// `cargo test --lib live_capture -- --ignored --nocapture`.
+    /// `PEEKA_AT="x,y"` warps the cursor there first (global top-left points).
+    /// Needs Accessibility for the process running the test.
+    #[test]
+    #[ignore]
+    fn live_capture_at_mouse() {
+        use core_graphics::display::CGDisplay;
+        use core_graphics::event::CGEvent;
+        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+        use core_graphics::geometry::CGPoint;
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        let _ = env_logger::builder().is_test(true).filter_level(log::LevelFilter::Info).try_init();
+        let trusted = unsafe { AXIsProcessTrusted() };
+        println!("AXIsProcessTrusted = {trusted}");
+        if !trusted {
+            println!("SKIP: this process has no Accessibility permission");
+            return;
+        }
+        if let Ok(at) = std::env::var("PEEKA_AT") {
+            let v: Vec<f64> = at.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            if let [x, y] = v[..] {
+                let _ = CGDisplay::warp_mouse_cursor_position(CGPoint::new(x, y));
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+        let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).expect("event source");
+        let p = CGEvent::new(src).expect("event").location();
+        println!("mouse at ({:.0}, {:.0})", p.x, p.y);
+        match capture_text_at(p.x, p.y, || DEFAULT_KEYCODE_C) {
+            Some(c) => println!("CAPTURED via {}: {:?} (app {:?}, bounds {:?})", c.tier.label(), c.text, c.source_app, c.bounds),
+            None => println!("CAPTURED nothing"),
+        }
     }
 
     #[test]
