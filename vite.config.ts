@@ -31,6 +31,7 @@ export default defineConfig(async () => ({
         systemConfig: resolve(__dirname, "system-config.html"),
         records: resolve(__dirname, "records.html"),
         chrome: resolve(__dirname, "chrome.html"),
+        highlight: resolve(__dirname, "highlight.html"),
       },
     },
   },

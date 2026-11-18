@@ -1,0 +1,54 @@
+/* Three-finger lookup highlight: a Tide box that blooms around the captured
+   text, holds, then fades (iPad "inputGlow": in 0.2s, hold 0.4s, out 0.4s). */
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#hl {
+  position: absolute;
+  inset: var(--pad, 10px);
+  border-radius: 7px;
+  border: 2px solid var(--tide);
+  background: color-mix(in srgb, var(--tide) 14%, transparent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--tide) 45%, transparent);
+  opacity: 0;
+}
+
+#hl.dot {
+  border-radius: 50%;
+}
+
+#hl.play {
+  animation:
+    hl-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.25) forwards,
+    hl-glow 0.6s ease-out 0.05s forwards,
+    hl-out 0.4s ease-in 0.6s forwards;
+}
+
+@keyframes hl-in {
+  from { opacity: 0; transform: scale(1.18); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes hl-glow {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tide) 50%, transparent); }
+  to { box-shadow: 0 0 0 8px color-mix(in srgb, var(--tide) 0%, transparent); }
+}
+
+@keyframes hl-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #hl.play {
+    animation:
+      hl-fade-in 0.15s linear forwards,
+      hl-out 0.3s linear 0.6s forwards;
+  }
+  @keyframes hl-fade-in { from { opacity: 0; } to { opacity: 1; } }
+}

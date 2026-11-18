@@ -1,4 +1,5 @@
 pub mod hover_detector;
+pub mod lookup_highlight;
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
