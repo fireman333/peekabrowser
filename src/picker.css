@@ -27,6 +27,10 @@ html, body {
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+  /* The window itself is rounded (16pt) and edged by the material; a CSS
+     hairline here drew a second, mismatched outline inside it. */
+  border: none;
+  border-radius: 0;
 }
 
 @media (prefers-reduced-transparency: reduce) {
