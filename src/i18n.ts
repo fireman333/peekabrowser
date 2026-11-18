@@ -291,6 +291,31 @@ const DICT = {
   "sys.ocrFailed": { "zh-TW": "OCR 失敗：{e} — 請手動輸入", en: "OCR failed: {e} — type manually" },
   "sys.creating": { "zh-TW": "建立中…", en: "Creating…" },
   "sys.failed": { "zh-TW": "建立失敗：", en: "Failed: " },
+
+  // --- chrome (layout agent) ---
+  "rail.label": { "zh-TW": "目的地", en: "Destinations" },
+  "rail.footer": { "zh-TW": "紀錄、釘選與設定", en: "Records, pin and settings" },
+  "rail.records": { "zh-TW": "紀錄", en: "Records" },
+  "rail.pin": { "zh-TW": "釘選視窗（不自動隱藏）", en: "Pin window (don't auto-hide)" },
+  "rail.unpin": { "zh-TW": "取消釘選視窗", en: "Unpin window" },
+  "rail.tabs": { "zh-TW": "{name}，{n} 個分頁", en: "{name}, {n} tabs" },
+  "rail.generating": { "zh-TW": "正在生成回答", en: "writing an answer" },
+  "rail.unseen": { "zh-TW": "有還沒看的新回答", en: "new answer not seen yet" },
+  "chrome.toolbar": { "zh-TW": "網頁工具列", en: "Page toolbar" },
+  "chrome.address": { "zh-TW": "網址（點一下編輯，⌘L）", en: "Address (click to edit, ⌘L)" },
+  "chrome.addressPh": { "zh-TW": "輸入網址或要搜尋的字", en: "Type a URL or search words" },
+  "chrome.secure": { "zh-TW": "安全連線", en: "Secure connection" },
+  "chrome.loading": { "zh-TW": "載入中", en: "Loading" },
+  "chrome.noPage": { "zh-TW": "沒有開啟中的頁面", en: "No page open" },
+  "chrome.nav": { "zh-TW": "瀏覽動作", en: "Page actions" },
+  "chrome.openBrowser": { "zh-TW": "在預設瀏覽器開啟", en: "Open in default browser" },
+  "chrome.more": { "zh-TW": "更多：截圖、寬度、重新開啟分頁、複製網址", en: "More: capture, width, reopen tab, copy URL" },
+  "chrome.newTab": { "zh-TW": "新分頁（⌘T）", en: "New tab (⌘T)" },
+  "chrome.newTabFull": { "zh-TW": "這個目的地已達 20 個分頁", en: "This destination has 20 tabs" },
+  "chrome.tabs": { "zh-TW": "分頁", en: "Tabs" },
+  "chrome.closeTab": { "zh-TW": "關閉分頁（⌘W）", en: "Close tab (⌘W)" },
+  "chrome.closeNamed": { "zh-TW": "關閉「{name}」", en: "Close “{name}”" },
+  "chrome.unloaded": { "zh-TW": "已卸載，點一下重新載入", en: "unloaded, click to reload" },
 } satisfies Record<string, Entry>;
 
 export type Key = keyof typeof DICT;

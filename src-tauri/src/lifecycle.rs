@@ -56,11 +56,18 @@ fn unload_after(app: &AppHandle) -> Duration {
     Duration::from_secs(secs)
 }
 
+/// Push the tab list to the rail and the top chrome, and show the chrome's tab
+/// row only while the active destination has two or more tabs.
 pub fn emit_pages(app: &AppHandle, mgr: &WebViewTabManager) {
-    if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
-        let _ = sidebar.emit("pages-updated", mgr.get_all_pages());
-        let _ = sidebar.emit("active-page-changed", mgr.active_page_id.clone().unwrap_or_default());
+    let pages = mgr.get_all_pages();
+    let active = mgr.active_page_id.clone().unwrap_or_default();
+    for label in [crate::panel::SIDEBAR_LABEL, crate::panel::CHROME_LABEL] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.emit("pages-updated", &pages);
+            let _ = w.emit("active-page-changed", &active);
+        }
     }
+    crate::panel::set_chrome_tab_row(app, mgr.active_dest_pages().len() >= 2);
 }
 
 fn emit_now(app: &AppHandle) {
@@ -74,8 +81,10 @@ fn emit_now(app: &AppHandle) {
 /// Show `msg` in the sidebar (and as a macOS notification while it is hidden).
 /// Callers pass text already localized via `crate::i18n`.
 pub fn notify(app: &AppHandle, msg: &str) {
-    if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
-        let _ = sidebar.emit("notice", msg);
+    for label in [crate::panel::SIDEBAR_LABEL, crate::panel::CHROME_LABEL] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.emit("notice", msg);
+        }
     }
     let visible = app.state::<Mgr>().lock().map(|m| m.panel_visible()).unwrap_or(false);
     if !visible {
@@ -117,14 +126,42 @@ fn acquire_slot(app: &AppHandle, url: &str) -> Result<String, String> {
     Ok(label)
 }
 
-/// Open a new page for a destination and show it.
+/// Open a new page for a destination and show it. Used by queries: past the
+/// per-destination cap the least-recently-viewed eligible tab is closed (and
+/// can be reopened).
 pub fn open_new_page(app: &AppHandle, dest: &Destination) -> Result<PageInfo, String> {
-    let label = acquire_slot(app, &dest.url)?;
+    open_new_page_at(app, dest, &dest.url)
+}
+
+/// Manual new tab (＋ / ⌘T / ⌘N): refused once the destination has
+/// [`crate::webviews::MAX_PAGES_PER_DEST`] tabs.
+pub fn open_manual_tab(app: &AppHandle, dest: &Destination) -> Result<PageInfo, String> {
+    let allowed = app.state::<Mgr>().lock().map_err(|_| "lock")?.can_open_manual(&dest.id);
+    if !allowed {
+        let msg = tab_cap_message();
+        notify(app, &msg);
+        return Err(msg);
+    }
+    open_new_page(app, dest)
+}
+
+fn tab_cap_message() -> String {
+    crate::i18n::trf(
+        "這個目的地已開了 {} 個分頁，請先關掉一些",
+        "This destination already has {} tabs; close some first",
+        &[&crate::webviews::MAX_PAGES_PER_DEST.to_string()],
+    )
+}
+
+/// Open a new page for `dest` showing `url`.
+pub fn open_new_page_at(app: &AppHandle, dest: &Destination, url: &str) -> Result<PageInfo, String> {
+    let label = acquire_slot(app, url)?;
     let (page, evicted) = {
         let mgr = app.state::<Mgr>();
         let mut mgr = mgr.lock().map_err(|_| "lock")?;
-        let (page, evicted) = mgr.create_page(&dest.id, &dest.name, &dest.icon, &label, &dest.url, is_busy);
+        let (page, evicted) = mgr.create_page(&dest.id, &dest.name, &dest.icon, &label, url, is_busy);
         mgr.set_active(&page.id);
+        crate::panel::prime_chrome_tab_row(mgr.active_dest_pages().len() >= 2);
         (page, evicted)
     };
     if let Some(ev) = evicted {
@@ -157,7 +194,12 @@ pub fn activate_page(app: &AppHandle, page_id: &str) -> Result<(), String> {
             l
         }
     };
-    app.state::<Mgr>().lock().map_err(|_| "lock")?.set_active(page_id);
+    {
+        let mgr = app.state::<Mgr>();
+        let mut mgr = mgr.lock().map_err(|_| "lock")?;
+        mgr.set_active(page_id);
+        crate::panel::prime_chrome_tab_row(mgr.active_dest_pages().len() >= 2);
+    }
     crate::panel::show_page_viewer(app, &label);
     remember_hidden_state(app);
     emit_now(app);
@@ -165,13 +207,14 @@ pub fn activate_page(app: &AppHandle, page_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Sidebar destination click: last page for it, or a new one.
+/// Rail destination click: its most recently viewed tab, or a new one when it
+/// has none. Clicking the selected destination never opens another tab.
 pub fn switch_destination(app: &AppHandle, dest: &Destination) -> Result<(), String> {
     let existing = app
         .state::<Mgr>()
         .lock()
         .map_err(|_| "lock")?
-        .get_last_page_for_dest(&dest.id)
+        .last_viewed_for_dest(&dest.id)
         .map(|p| p.id.clone());
     match existing {
         Some(id) => activate_page(app, &id),
@@ -179,25 +222,48 @@ pub fn switch_destination(app: &AppHandle, dest: &Destination) -> Result<(), Str
     }
 }
 
-/// Close a page by id. A viewer slot label (`page-N`, sent by the in-page
-/// ⌘W handler) is accepted too and resolved to the page it currently shows.
+/// Close a page by id (user action). A viewer slot label (`page-N`, sent by
+/// the in-page ⌘W handler) is accepted too and resolved to the page it
+/// currently shows. The last tab of a destination is never closed; closed
+/// tabs go to the reopen stack.
 pub fn close_page(app: &AppHandle, page_id: &str) {
-    let (removed, next) = {
+    let page_id = {
         let mgr = app.state::<Mgr>();
-        let Ok(mut mgr) = mgr.lock() else { return };
-        let page_id = if mgr.get_page(page_id).is_some() {
+        let Ok(mgr) = mgr.lock() else { return };
+        if mgr.get_page(page_id).is_some() {
             page_id.to_string()
         } else {
             match mgr.page_id_for_label(page_id) {
                 Some(id) => id,
                 None => return,
             }
-        };
-        let page_id = page_id.as_str();
-        let removed = mgr.remove_page(page_id);
+        }
+    };
+    close_pages(app, &[page_id]);
+}
+
+/// Close several tabs at once (close others / close to the right), keeping at
+/// least one tab per destination, then show whatever is active afterwards.
+pub fn close_pages(app: &AppHandle, ids: &[String]) {
+    let (removed, next) = {
+        let mgr = app.state::<Mgr>();
+        let Ok(mut mgr) = mgr.lock() else { return };
+        let mut removed = Vec::new();
+        for id in ids {
+            if mgr.get_page(id).is_none() || mgr.is_last_in_dest(id) {
+                continue;
+            }
+            if let Some(p) = mgr.remove_page(id) {
+                mgr.push_closed(&p);
+                removed.push(p);
+            }
+        }
         (removed, mgr.active_page_id.clone())
     };
-    if let Some(p) = removed {
+    if removed.is_empty() {
+        return;
+    }
+    for p in removed {
         set_draft(&p.id, false);
         if let Some(l) = p.label {
             release_slot(app, &p.id, &l);
@@ -209,6 +275,95 @@ pub fn close_page(app: &AppHandle, page_id: &str) {
         }
         None => emit_now(app),
     }
+}
+
+/// ⌘⇧T / ⋯ menu: reopen the most recently closed tab in its destination.
+pub fn reopen_closed(app: &AppHandle) -> Result<(), String> {
+    loop {
+        let Some(closed) = app.state::<Mgr>().lock().map_err(|_| "lock")?.pop_closed() else {
+            return Ok(());
+        };
+        // The destination may have been removed since; skip such entries.
+        let Some(dest) = app.state::<crate::destinations::DestinationManager>().get_by_id(&closed.dest_id) else {
+            continue;
+        };
+        let allowed = app.state::<Mgr>().lock().map_err(|_| "lock")?.can_open_manual(&dest.id);
+        if !allowed {
+            if let Ok(mut m) = app.state::<Mgr>().lock() {
+                m.push_closed_entry(closed);
+            }
+            let msg = tab_cap_message();
+            notify(app, &msg);
+            return Err(msg);
+        }
+        let page = open_new_page_at(app, &dest, &closed.url)?;
+        if let Ok(mut m) = app.state::<Mgr>().lock() {
+            m.update_meta(&page.id, Some(&closed.title), None);
+            if let Some(q) = &closed.query_id {
+                m.set_query(&page.id, q);
+            }
+        }
+        emit_now(app);
+        return Ok(());
+    }
+}
+
+/// ⌘⇧[ / ⌘⇧]: previous / next tab of the active destination (wraps).
+pub fn cycle_tab(app: &AppHandle, delta: i32) -> Result<(), String> {
+    let target = app.state::<Mgr>().lock().map_err(|_| "lock")?.cycle_target(delta);
+    match target {
+        Some(id) => activate_page(app, &id),
+        None => Ok(()),
+    }
+}
+
+/// A viewer slot started or finished loading: update the chrome's loading
+/// line, and on finish remember the page's URL and title.
+pub fn on_slot_load(app: &AppHandle, label: &str, loading: bool, url: &str) {
+    let blank = url.is_empty() || url == "about:blank";
+    crate::panel::set_slot_loading(label, loading && !blank);
+    if let Some(w) = app.get_webview_window(crate::panel::CHROME_LABEL) {
+        let _ = w.emit(
+            "chrome-load",
+            serde_json::json!({ "label": label, "loading": loading && !blank, "url": if blank { "" } else { url } }),
+        );
+    }
+    if loading || blank {
+        return;
+    }
+    let app = app.clone();
+    let label = label.to_string();
+    let url = url.to_string();
+    std::thread::spawn(move || {
+        let title = app
+            .get_webview_window(&label)
+            .and_then(|w| crate::native::eval_blocking(&w, "String(document.title || '')", Duration::from_secs(2)));
+        if let Ok(mut m) = app.state::<Mgr>().lock() {
+            if let Some(pid) = m.page_id_for_label(&label) {
+                m.update_meta(&pid, title.as_deref().filter(|t| !t.is_empty()), Some(&url));
+            }
+        }
+        emit_now(&app);
+    });
+}
+
+/// Re-read the active page's live URL and title (SPA navigations don't fire
+/// page-load events). Cheap; called when the pointer enters the chrome.
+pub fn refresh_active_meta(app: &AppHandle) {
+    let Some(target) = active_target(app) else { return };
+    let url = app.get_webview_window(&target.label).and_then(|w| w.url().ok()).map(|u| u.to_string());
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let title = app
+            .get_webview_window(&target.label)
+            .and_then(|w| crate::native::eval_blocking(&w, "String(document.title || '')", Duration::from_secs(2)));
+        if let Ok(mut m) = app.state::<Mgr>().lock() {
+            if m.get_page(&target.page_id).and_then(|p| p.label.as_deref()) == Some(target.label.as_str()) {
+                m.update_meta(&target.page_id, title.as_deref().filter(|t| !t.is_empty()), url.as_deref());
+            }
+        }
+        emit_now(&app);
+    });
 }
 
 pub fn close_page_by_label(app: &AppHandle, label: &str) {
