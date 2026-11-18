@@ -1,0 +1,127 @@
+/* Shared design tokens — ported from the iPad app (Brand/Theme.swift,
+   Assets.xcassets, research/19-ui-overhaul-spec.md). Import first in every page. */
+:root {
+  color-scheme: light dark;
+
+  --bg-window: #F6F4F0;
+  --bg-surface: #FFFFFF;
+  --bg-sunken: #ECE9E3;
+  --solid-chrome: #FBFAF8;
+  --solid-chrome-rgb: 251, 250, 248;
+  --ink1: #1A1C20;
+  --ink2: #5A5E66;
+  --ink3: #62666E;
+  --line-hair: #DAD6CF;
+  --line-strong: #85888F;
+  --tide: #0A6F6B;
+  --tide-pressed: #075955;
+  --on-tide: #FFFFFF;
+  --tide-soft: #D5ECE9;
+  --ember: #B0421C;
+  --ember-fill: #E8734A;
+  --ember-soft: #FBE6DC;
+  --toggle-on: #0A6F6B;
+  --state-ok: #1B7A4B;
+  --state-warn: #8A5A00;
+  --state-danger: #B3261E;
+
+  --fill-hover: rgba(26, 28, 32, 0.06);
+  --fill-selected: rgba(255, 255, 255, 0.92);
+  --shadow-selected: 0 1px 3px rgba(0, 0, 0, 0.14);
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --scrim: rgba(0, 0, 0, 0.28);
+
+  --glass-bg: rgba(var(--solid-chrome-rgb), 0.70);
+  --glass-blur: saturate(1.6) blur(24px);
+
+  --r-container: 28px;
+  --r-card: 20px;
+  --r-inner: 16px;
+  --r-small: 12px;
+  --r-keycap: 7px;
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 40px;
+  --row-gap: 6px;
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang TC", system-ui, sans-serif;
+  --fs-display: 28px;
+  --fs-title: 22px;
+  --fs-headline: 17px;
+  --fs-body: 15px;   /* macOS body is smaller than iPad's 17 */
+  --fs-callout: 13px;
+  --fs-footnote: 12px;
+  --fs-micro: 10px;
+
+  --t-quick: 0.15s;
+  --t-fade: 0.2s;
+  --t-selection: 0.3s;
+  --ease-smooth: cubic-bezier(0.25, 0.1, 0.25, 1);
+
+  /* Monogram tile colours */
+  --tile-google: #3B6FD4;
+  --tile-chatgpt: #1B7F64;
+  --tile-claude: #AD5A39;
+  --tile-gemini: #6B5CD6;
+  --tile-perplexity: #237F8C;
+  --tile-openevidence: #C2502E;
+  --tile-other: #7A5C3A;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-window: #0F1113;
+    --bg-surface: #1A1D20;
+    --bg-sunken: #24282C;
+    --solid-chrome: #1E2125;
+    --solid-chrome-rgb: 30, 33, 37;
+    --ink1: #F1EFEA;
+    --ink2: #B3B6BC;
+    --ink3: #92969D;
+    --line-hair: #2C3035;
+    --line-strong: #7C8189;
+    --tide: #5AD6CA;
+    --tide-pressed: #3FBDB1;
+    --on-tide: #06201E;
+    --tide-soft: #143531;
+    --ember: #FF9D7A;
+    --ember-fill: #F08A62;
+    --ember-soft: #3A2219;
+    --toggle-on: #1C968C;
+    --state-ok: #5DD39E;
+    --state-warn: #F0C060;
+    --state-danger: #FF8A80;
+
+    --fill-hover: rgba(241, 239, 234, 0.08);
+    --fill-selected: rgba(241, 239, 234, 0.16);
+    --shadow-selected: none;
+    --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.08);
+    --scrim: rgba(0, 0, 0, 0.5);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root { --glass-bg: var(--solid-chrome); --glass-blur: none; }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --line-hair: var(--line-strong);
+    --fill-selected: var(--bg-surface);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-selection: 0.15s; }
+}
+
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-float);
+}

@@ -655,6 +655,37 @@ pub fn pick_destination_by_index(app: &AppHandle, index: usize) -> Result<(), St
     pick_destination_impl(app, &id, None)
 }
 
+/// Send the pending payload (already stored in `PickerState`) according to
+/// the "Text from other apps" setting: last used / fixed / let me choose.
+/// Shared by ⌘C ⌘C and the three-finger lookup tap. Safe to call off the main thread.
+pub fn route_text_from_other_apps(app: &AppHandle) {
+    let settings = app
+        .try_state::<crate::app_settings::AppSettingsStore>()
+        .map(|s| s.get())
+        .unwrap_or_default();
+    let dests = app.state::<DestinationManager>().get_all();
+    let exists = |id: &Option<String>| id.as_ref().filter(|i| dests.iter().any(|d| &d.id == *i)).cloned();
+    let target = match settings.text_from_other_apps.as_str() {
+        "fixed" => exists(&settings.fixed_destination_id).or_else(|| dests.first().map(|d| d.id.clone())),
+        "last_used" => exists(&settings.last_used_destination_id),
+        _ => None,
+    };
+    let app2 = app.clone();
+    match target {
+        Some(id) => {
+            let _ = app.run_on_main_thread(move || {
+                if let Err(e) = pick_destination_impl(&app2, &id, None) {
+                    log::warn!("auto-send to {} failed: {}", id, e);
+                }
+            });
+        }
+        None => {
+            let (cx, cy) = crate::panel::get_cursor_topleft_pos();
+            let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
+        }
+    }
+}
+
 /// Shared by the picker click, its keyboard shortcuts and auto-send.
 /// Must run on the main thread (creates/positions windows).
 pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) -> Result<(), String> {
@@ -697,6 +728,15 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>) ->
     }
 
     crate::panel::show_panel(&app);
+
+    // Remember the choice for "Text from other apps → Last used".
+    if let Some(store) = app.try_state::<crate::app_settings::AppSettingsStore>() {
+        let mut s = store.get();
+        if s.last_used_destination_id.as_deref() != Some(dest.id.as_str()) {
+            s.last_used_destination_id = Some(dest.id.clone());
+            store.update(s);
+        }
+    }
 
     // Record what is being asked, where, and from which app.
     let record_id = app.try_state::<crate::records::RecordStore>().and_then(|store| {

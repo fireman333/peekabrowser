@@ -132,7 +132,11 @@ pub fn spawn(app: AppHandle, d: Delivery) {
 /// Poll page readiness at a modest rate for a bounded time; the first
 /// successful injection ends the loop. Request id makes retries idempotent.
 fn inject_text(app: &AppHandle, t: &Target, request_id: &str, text: &str) -> bool {
-    let payload = serde_json::json!({ "requestId": request_id, "kind": "text", "text": text, "submit": true });
+    let submit = app
+        .try_state::<crate::app_settings::AppSettingsStore>()
+        .map(|s| s.get().auto_submit)
+        .unwrap_or(true);
+    let payload = serde_json::json!({ "requestId": request_id, "kind": "text", "text": text, "submit": submit });
     retry_until(t, Duration::from_secs(25), || {
         let r: Option<InjectResult> = call(app, &t.label, "inject", &[payload.clone()]);
         match r.map(|r| r.status).as_deref() {

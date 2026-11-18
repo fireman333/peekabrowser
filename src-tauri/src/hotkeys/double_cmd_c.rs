@@ -189,21 +189,7 @@ fn fire(app: &AppHandle) -> bool {
             s.source_app = source_app;
         }
     }
-    let auto_first = app
-        .try_state::<crate::app_settings::AppSettingsStore>()
-        .map(|s| s.get().auto_send_first)
-        .unwrap_or(false);
-    let app2 = app.clone();
-    if auto_first {
-        let _ = app.run_on_main_thread(move || {
-            if let Err(e) = crate::commands::pick_destination_by_index(&app2, 0) {
-                log::warn!("auto-send to first destination failed: {}", e);
-            }
-        });
-    } else {
-        let (cx, cy) = crate::panel::get_cursor_topleft_pos();
-        let _ = app.run_on_main_thread(move || crate::panel::show_picker(&app2, cx, cy));
-    }
+    crate::commands::route_text_from_other_apps(app);
     true
 }
 
