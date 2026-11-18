@@ -1142,6 +1142,8 @@ pub fn save_app_settings(
     store.update(settings);
     crate::panel::hover_detector::sync_monitors(&app);
     crate::lifecycle::ensure_maintenance(&app);
+    // Start/stop the three-finger lookup trigger to match the new setting.
+    crate::hotkeys::three_finger::sync(&app);
     let language = store.get().language;
     if language != old_language {
         apply_language(&app, &language);

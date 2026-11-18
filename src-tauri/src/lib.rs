@@ -12,6 +12,7 @@ pub mod permissions;
 pub mod picker_keys;
 pub mod records;
 pub mod screenshot;
+pub mod selection;
 pub mod tray;
 pub mod updater;
 pub mod webviews;
@@ -122,6 +123,9 @@ pub fn run() {
 
             // Start double-copy detector
             hotkeys::double_cmd_c::start_double_cmd_c_detector(handle.clone());
+
+            // three-finger lookup (opt-in; starts only if three_finger_lookup is on)
+            hotkeys::three_finger::sync(&handle);
 
             // Builds before v2.0.5 were ad-hoc signed, so their Accessibility / Screen
             // Recording entries no longer match. Once, clear them and ask again.

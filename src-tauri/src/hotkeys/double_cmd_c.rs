@@ -16,7 +16,7 @@
 //! pasteboard `changeCount` is still sampled: slowly while idle (baseline
 //! refresh), fast for a short window after each ⌘C key press.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -37,6 +37,21 @@ static INSTALLING: AtomicBool = AtomicBool::new(false);
 
 /// Timestamps (ms) of the last two ⌘C key presses: (previous, latest).
 static TAPS: Mutex<(u64, u64)> = Mutex::new((0, 0));
+
+/// Until this time (ms) ⌘C presses and pasteboard changes are our own
+/// synthetic copy (three-finger lookup) and must not count as a double copy.
+static IGNORE_UNTIL: AtomicU64 = AtomicU64::new(0);
+
+/// Ignore ⌘C presses and pasteboard changes for `d` (call before posting a
+/// synthetic ⌘C and again after restoring the pasteboard).
+pub fn ignore_synthetic_copy(d: Duration) {
+    IGNORE_UNTIL.store(current_timestamp_ms() + d.as_millis() as u64, Ordering::SeqCst);
+    clear_taps();
+}
+
+fn ignoring(now: u64) -> bool {
+    now < IGNORE_UNTIL.load(Ordering::SeqCst)
+}
 
 /// Whether ⌘C ⌘C is currently able to fire (key monitor installed).
 pub fn is_active() -> bool {
@@ -68,8 +83,12 @@ fn ensure_key_monitor(app: &AppHandle) {
 }
 
 fn record_tap() {
+    let now = current_timestamp_ms();
+    if ignoring(now) {
+        return;
+    }
     if let Ok(mut t) = TAPS.lock() {
-        *t = (t.1, current_timestamp_ms());
+        *t = (t.1, now);
     }
 }
 
@@ -144,6 +163,14 @@ fn monitor_pasteboard(app: AppHandle) {
                     }
                 }
             }
+            continue;
+        }
+
+        if ignoring(now) {
+            // Synthetic ⌘C + pasteboard restore: rebaseline, never fire.
+            last_count = current_count;
+            last_change_time = 0;
+            pending = None;
             continue;
         }
 
