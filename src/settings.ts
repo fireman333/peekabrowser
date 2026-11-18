@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isImeKey } from "./ime";
 import { listen } from "@tauri-apps/api/event";
 import { escapeHtml } from "./icons";
 import { applyI18n, getLang, initI18n, normalizeLang, onLangChange, setLang, t, type Lang } from "./i18n";
@@ -667,6 +668,8 @@ function setupShortcutEditing() {
   // Global keydown listener for recording
   document.addEventListener("keydown", async (e) => {
     if (!activeRecording) return;
+    // An input method owns this key (keyCode 229): wait for a real key.
+    if (isImeKey(e)) return;
 
     e.preventDefault();
     e.stopPropagation();

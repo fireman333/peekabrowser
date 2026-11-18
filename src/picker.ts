@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isImeKey } from "./ime";
 import { listen } from "@tauri-apps/api/event";
 import { applyMaterial, destIcon, escapeHtml, hydrateIcons, installFaviconFallback } from "./icons";
 import { initI18n, onLangChange, t } from "./i18n";
@@ -57,6 +58,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // C/V/B/N/M and Esc are handled natively (hardware key codes, so they work
   // with any input method, e.g. 注音); this is only a fallback for Esc.
   document.addEventListener("keydown", (e) => {
+    if (isImeKey(e)) return;
     if (e.key === "Escape") dismissPicker();
     // Return picks the first (default) destination, as the "Default ⏎" tag says.
     else if (e.key === "Enter" && lastData?.destinations[0] && document.activeElement?.className !== "picker-btn") {

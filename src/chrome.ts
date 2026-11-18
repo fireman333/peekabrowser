@@ -2,6 +2,7 @@
 // (when the destination has 2+ tabs) the tab row. Rust sizes the window and
 // shows/hides it together with the page (panel::sync_chrome).
 import { invoke } from "@tauri-apps/api/core";
+import { isImeKey, trackComposition } from "./ime";
 import { listen } from "@tauri-apps/api/event";
 import { applyMaterial, destTile, hydrateIcons, icon, installFaviconFallback } from "./icons";
 import { initI18n, onLangChange, t } from "./i18n";
@@ -35,7 +36,6 @@ interface ChromeState {
   closed_count: number;
   can_new_tab: boolean;
   width_preset: string;
-  pinned: boolean;
 }
 
 const CHIP_MIN = 96;
@@ -45,7 +45,7 @@ const CHIP_GAP = 4;
 let destinations: Destination[] = [];
 let pages: PageInfo[] = [];
 let activePageId: string | null = null;
-let state: ChromeState = { url: "", loading: false, closed_count: 0, can_new_tab: false, width_preset: "medium", pinned: false };
+let state: ChromeState = { url: "", loading: false, closed_count: 0, can_new_tab: false, width_preset: "medium" };
 let editing = false;
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -287,7 +287,10 @@ function newTab() {
 
 function setupDom() {
   address.addEventListener("click", startEditing);
+  const addrComposing = trackComposition(addrInput);
   addrInput.addEventListener("keydown", (e) => {
+    // Enter / Escape that confirm or cancel an IME composition are not ours.
+    if (isImeKey(e) || addrComposing()) return;
     if (e.key === "Enter") {
       e.preventDefault();
       const value = addrInput.value;
