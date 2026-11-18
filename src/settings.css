@@ -166,7 +166,7 @@ input.switch {
   width: 40px;
   height: 24px;
   border-radius: 12px;
-  background: var(--line-strong);
+  background: var(--toggle-off);
   cursor: pointer;
   transition: background var(--t-quick) var(--ease-smooth);
 }

@@ -21,6 +21,9 @@
   --ember-fill: #E8734A;
   --ember-soft: #FBE6DC;
   --toggle-on: #0A6F6B;
+  /* Off track: a light neutral fill (iOS systemFill), so on vs off differs
+     in lightness, not just hue. */
+  --toggle-off: rgba(120, 120, 128, 0.22);
   --state-ok: #1B7A4B;
   --state-warn: #8A5A00;
   --state-danger: #B3261E;
@@ -92,6 +95,7 @@
     --ember-fill: #F08A62;
     --ember-soft: #3A2219;
     --toggle-on: #1C968C;
+    --toggle-off: rgba(120, 120, 128, 0.36);
     --state-ok: #5DD39E;
     --state-warn: #F0C060;
     --state-danger: #FF8A80;
@@ -112,6 +116,7 @@
   :root {
     --line-hair: var(--line-strong);
     --fill-selected: var(--bg-surface);
+    --toggle-off: var(--line-strong);
   }
 }
 
