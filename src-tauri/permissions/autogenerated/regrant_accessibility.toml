@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-regrant-accessibility"
+description = "Enables the regrant_accessibility command without any pre-configured scope."
+commands.allow = ["regrant_accessibility"]
+
+[[permission]]
+identifier = "deny-regrant-accessibility"
+description = "Denies the regrant_accessibility command without any pre-configured scope."
+commands.deny = ["regrant_accessibility"]

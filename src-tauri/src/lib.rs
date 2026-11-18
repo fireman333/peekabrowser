@@ -279,3 +279,49 @@ pub fn run() {
             }
         });
 }
+
+#[cfg(test)]
+mod acl_tests {
+    //! The app ACL (build.rs + permissions/app.toml) must list exactly the
+    //! commands in `generate_handler!`, or a window loses a command silently.
+    use std::collections::BTreeSet;
+
+    fn handler_commands() -> BTreeSet<String> {
+        let src = include_str!("lib.rs");
+        let start = src.find("generate_handler![").expect("generate_handler");
+        let body = &src[start..start + src[start..].find("])").expect("end of handler list")];
+        body.split("commands::").skip(1).map(|s| s.split(|c: char| c == ',' || c.is_whitespace()).next().unwrap().to_string()).collect()
+    }
+
+    fn quoted_in(src: &str, from: &str, to: &str) -> BTreeSet<String> {
+        let a = src.find(from).expect(from);
+        let b = a + src[a..].find(to).expect(to);
+        src[a..b].split('"').skip(1).step_by(2).map(str::to_string).collect()
+    }
+
+    #[test]
+    fn build_manifest_matches_handler() {
+        let manifest = quoted_in(include_str!("../build.rs"), "const COMMANDS", "];");
+        assert_eq!(manifest, handler_commands());
+    }
+
+    #[test]
+    fn local_windows_set_allows_every_command() {
+        let toml = include_str!("../permissions/app.toml");
+        let local = quoted_in(toml, "identifier = \"local-windows\"", "]");
+        let want: BTreeSet<String> = handler_commands().iter().map(|c| format!("allow-{}", c.replace('_', "-"))).collect();
+        assert_eq!(local.into_iter().filter(|p| p.starts_with("allow-")).collect::<BTreeSet<_>>(), want);
+    }
+
+    #[test]
+    fn pages_only_get_the_tab_shortcuts() {
+        let toml = include_str!("../permissions/app.toml");
+        let page = quoted_in(toml, "identifier = \"page-shortcuts\"", "]");
+        let page: BTreeSet<String> = page.into_iter().filter(|p| p.starts_with("allow-")).collect();
+        let want: BTreeSet<String> =
+            ["allow-close-page", "allow-new-tab-for-active", "allow-cycle-tab", "allow-reopen-closed-tab"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(page, want);
+        let caps = include_str!("../capabilities/pages.json");
+        assert!(!caps.contains("core:") && !caps.contains("local-windows"), "pages must not get core/plugin/app-wide permissions");
+    }
+}

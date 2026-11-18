@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-record-attachment"
+description = "Enables the get_record_attachment command without any pre-configured scope."
+commands.allow = ["get_record_attachment"]
+
+[[permission]]
+identifier = "deny-get-record-attachment"
+description = "Denies the get_record_attachment command without any pre-configured scope."
+commands.deny = ["get_record_attachment"]

@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pages",
+  "description": "Web pages shown in the viewer: only the tab shortcuts of the injected script. No plugin or core permissions.",
+  "windows": ["page-*"],
+  "remote": {
+    "urls": ["https://*", "http://*"]
+  },
+  "permissions": ["page-shortcuts"]
+}

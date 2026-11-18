@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-record-markdown"
+description = "Enables the copy_record_markdown command without any pre-configured scope."
+commands.allow = ["copy_record_markdown"]
+
+[[permission]]
+identifier = "deny-copy-record-markdown"
+description = "Denies the copy_record_markdown command without any pre-configured scope."
+commands.deny = ["copy_record_markdown"]

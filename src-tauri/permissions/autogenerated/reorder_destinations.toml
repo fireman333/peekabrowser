@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reorder-destinations"
+description = "Enables the reorder_destinations command without any pre-configured scope."
+commands.allow = ["reorder_destinations"]
+
+[[permission]]
+identifier = "deny-reorder-destinations"
+description = "Denies the reorder_destinations command without any pre-configured scope."
+commands.deny = ["reorder_destinations"]

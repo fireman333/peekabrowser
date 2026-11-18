@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-picker-data"
+description = "Enables the get_picker_data command without any pre-configured scope."
+commands.allow = ["get_picker_data"]
+
+[[permission]]
+identifier = "deny-get-picker-data"
+description = "Denies the get_picker_data command without any pre-configured scope."
+commands.deny = ["get_picker_data"]
