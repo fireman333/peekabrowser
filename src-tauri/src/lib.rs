@@ -91,6 +91,7 @@ pub fn run() {
             // Top chrome above the page (address bar, navigation, tab row) and
             // its native menus (⋯, tab right-click).
             panel::create_chrome_panel(&handle)?;
+            panel::create_grip_panel(&handle)?;
             handle.on_menu_event(|app, event| commands::handle_chrome_menu(app, event.id().as_ref()));
 
             // Create the floating destination picker popup
@@ -192,6 +193,7 @@ pub fn run() {
             commands::send_to_active,
             commands::get_clipboard_text,
             commands::set_viewer_width,
+            commands::resize_drag,
             commands::get_picker_data,
             commands::pick_destination,
             commands::hide_picker_panel,

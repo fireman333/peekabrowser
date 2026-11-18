@@ -1,9 +1,11 @@
-//! Animated highlight drawn around the text a three-finger tap captured.
-//! When the text's bounds are unknown, a word-sized marker pill is drawn at
-//! the cursor instead, so the feedback still reads as "this text was taken".
-//! A transparent, click-through, non-activating panel; the animation lives
-//! in highlight.html and is started from here with `eval`, so no IPC
-//! permission is involved.
+//! "Sent" chip: when captured text (three-finger tap or ⌘C+C) goes straight to
+//! a destination without the picker, a small capsule styled like the picker
+//! rows pops up beside the pointer — destination icon, name and a snippet of
+//! the text — then fades. Nothing is drawn when the picker opens (the picker
+//! itself is the feedback). Text-box outlines were dropped: the captured
+//! text's on-screen bounds are often slightly off, so the box looked skewed.
+//! A transparent, click-through, non-activating panel; the content is set
+//! from here with `eval`, so no IPC permission is involved.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -11,22 +13,24 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_nspanel::ManagerExt;
 
 pub const LABEL: &str = "lookup-highlight";
-/// Room around the box for the pop overshoot, ripple and glow (points).
-const PAD: f64 = 18.0;
-/// Marker pill drawn when only the cursor position is known.
-const PILL_H: f64 = 26.0;
-const PILL_MIN_W: f64 = 56.0;
-const PILL_MAX_W: f64 = 240.0;
-/// Animation length (≈ 0.56 s, see highlight.css) plus a margin.
-const VISIBLE_FOR: Duration = Duration::from_millis(700);
+/// Overlay window size; the capsule sits inside with room for its shadow.
+const WIN_W: f64 = 360.0;
+const WIN_H: f64 = 84.0;
+/// Capsule's top-left inside the window.
+const CHIP_INSET: (f64, f64) = (16.0, 12.0);
+/// Capsule's top-left relative to the pointer (below-right, clear of the cursor).
+const CURSOR_OFFSET: (f64, f64) = (14.0, 20.0);
+/// Fade in + hold + fade out (see highlight.css) plus a margin.
+const VISIBLE_FOR: Duration = Duration::from_millis(1500);
+const SNIPPET_CHARS: usize = 28;
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Create the hidden overlay panel (called once at launch).
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let w = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("highlight.html".into()))
-        .title("Peekabrowser Highlight")
-        .inner_size(PILL_MIN_W + 2.0 * PAD, PILL_H + 2.0 * PAD)
+        .title("Peekabrowser Sent")
+        .inner_size(WIN_W, WIN_H)
         .position(-3000.0, -3000.0)
         .decorations(false)
         .transparent(true)
@@ -41,51 +45,66 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Rough on-screen width of the captured text (first line only), used to
-/// size the pill: ~8 pt per narrow character, ~15 pt per wide (CJK) one.
-pub fn pill_width(text: &str) -> f64 {
-    let line = text.trim().lines().next().unwrap_or("");
-    let est: f64 = line.chars().map(|c| if (c as u32) >= 0x2E80 { 15.0 } else { 8.0 }).sum();
-    (est + 16.0).clamp(PILL_MIN_W, PILL_MAX_W)
-}
-
-/// Frame (x, y, w, h) of the overlay window and the shape to draw, in global
-/// top-left points. Pure, for tests.
-pub fn overlay_frame(
-    bounds: Option<(f64, f64, f64, f64)>,
-    cursor: (f64, f64),
-    text: &str,
-) -> ((f64, f64, f64, f64), &'static str) {
-    match bounds.filter(|b| b.2 >= 2.0 && b.3 >= 2.0 && b.2 <= 4000.0 && b.3 <= 4000.0) {
-        // Grow the text box slightly so the border doesn't sit on the glyphs.
-        Some((x, y, w, h)) => ((x - 4.0 - PAD, y - 3.0 - PAD, w + 8.0 + 2.0 * PAD, h + 6.0 + 2.0 * PAD), "box"),
-        None => {
-            let w = pill_width(text);
-            ((cursor.0 - w / 2.0 - PAD, cursor.1 - PILL_H / 2.0 - PAD, w + 2.0 * PAD, PILL_H + 2.0 * PAD), "pill")
-        }
+/// First line of the text, whitespace collapsed, cut to a short snippet.
+pub fn snippet(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = line.chars().take(SNIPPET_CHARS).collect();
+    if line.chars().count() > SNIPPET_CHARS {
+        out.push('…');
     }
+    out
 }
 
-/// Play the highlight. `text` only sizes the fallback pill. Safe to call
-/// from any thread; returns immediately.
-pub fn show(app: &AppHandle, bounds: Option<(f64, f64, f64, f64)>, cursor: (f64, f64), text: &str) {
-    let ((x, y, w, h), kind) = overlay_frame(bounds, cursor, text);
+/// Window origin for a pointer at `cursor`, kept inside `screen`
+/// (x, y, w, h); flips to the pointer's left/top near the right/bottom edge.
+/// Pure, for tests.
+pub fn window_origin(cursor: (f64, f64), screen: (f64, f64, f64, f64)) -> (f64, f64) {
+    let (sx, sy, sw, sh) = screen;
+    let mut x = cursor.0 + CURSOR_OFFSET.0 - CHIP_INSET.0;
+    let mut y = cursor.1 + CURSOR_OFFSET.1 - CHIP_INSET.1;
+    if x + WIN_W > sx + sw {
+        x = cursor.0 - CURSOR_OFFSET.0 - WIN_W + CHIP_INSET.0;
+    }
+    if y + WIN_H > sy + sh {
+        y = cursor.1 - CURSOR_OFFSET.1 - WIN_H + CHIP_INSET.1;
+    }
+    (x.max(sx), y.max(sy))
+}
+
+/// Show the chip for text sent to `dest`. Safe from any thread; returns
+/// immediately.
+pub fn show_sent(app: &AppHandle, cursor: (f64, f64), dest: &crate::destinations::Destination, text: &str) {
+    let screen = super::get_all_screens()
+        .into_iter()
+        .find(|s| cursor.0 >= s.x && cursor.0 < s.x + s.width && cursor.1 >= s.y && cursor.1 < s.y + s.height)
+        .map(|s| (s.x, s.y, s.width, s.height))
+        .unwrap_or((cursor.0 - 2000.0, cursor.1 - 2000.0, 4000.0, 4000.0));
+    let (x, y) = window_origin(cursor, screen);
+    let flipped = x + CHIP_INSET.0 < cursor.0;
+    let payload = serde_json::json!({
+        "name": dest.name,
+        "icon": dest.icon,
+        "url": dest.url,
+        "snippet": snippet(text),
+        "alignRight": flipped,
+    })
+    .to_string();
     let gen = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(win) = app2.get_webview_window(LABEL) else { return };
         let _ = win.set_position(tauri::LogicalPosition::new(x, y));
-        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+        let _ = win.set_size(tauri::LogicalSize::new(WIN_W, WIN_H));
         if let Ok(p) = app2.get_webview_panel(LABEL) {
             p.order_front_regardless();
         }
-        let _ = win.eval(&format!("window.__pbPlay && window.__pbPlay({:?}, {})", kind, PAD));
+        let _ = win.eval(&format!("window.__pbSent && window.__pbSent({})", payload));
     });
     let app3 = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(VISIBLE_FOR);
         if GENERATION.load(Ordering::SeqCst) != gen {
-            return; // a newer highlight owns the window
+            return; // a newer chip owns the window
         }
         let app4 = app3.clone();
         let _ = app3.run_on_main_thread(move || {
@@ -100,32 +119,24 @@ pub fn show(app: &AppHandle, bounds: Option<(f64, f64, f64, f64)>, cursor: (f64,
 mod tests {
     use super::*;
 
+    const SCREEN: (f64, f64, f64, f64) = (0.0, 0.0, 1440.0, 900.0);
+
     #[test]
-    fn box_grows_around_text_with_glow_padding() {
-        let ((x, y, w, h), kind) = overlay_frame(Some((100.0, 200.0, 40.0, 16.0)), (0.0, 0.0), "word");
-        assert_eq!(kind, "box");
-        assert_eq!((x, y, w, h), (78.0, 179.0, 84.0, 58.0));
+    fn chip_sits_below_right_of_the_pointer() {
+        let (x, y) = window_origin((500.0, 300.0), SCREEN);
+        assert_eq!((x + CHIP_INSET.0, y + CHIP_INSET.1), (514.0, 320.0));
     }
 
     #[test]
-    fn missing_or_absurd_bounds_fall_back_to_pill_at_cursor() {
-        for b in [None, Some((0.0, 0.0, 0.0, 10.0)), Some((0.0, 0.0, 9000.0, 10.0))] {
-            let ((x, y, w, h), kind) = overlay_frame(b, (500.0, 300.0), "lookup");
-            assert_eq!(kind, "pill");
-            assert_eq!((x + w / 2.0, y + h / 2.0), (500.0, 300.0));
-            assert_eq!(h, PILL_H + 2.0 * PAD);
-            assert!(w > h, "pill is wider than tall");
-        }
+    fn chip_flips_near_the_right_and_bottom_edges() {
+        let (x, y) = window_origin((1420.0, 890.0), SCREEN);
+        assert!(x + WIN_W <= 1440.0 && y + WIN_H <= 900.0);
+        assert!(x + CHIP_INSET.0 < 1420.0);
     }
 
     #[test]
-    fn pill_width_follows_text_and_is_clamped() {
-        assert_eq!(pill_width(""), PILL_MIN_W);
-        assert_eq!(pill_width("a"), PILL_MIN_W);
-        assert_eq!(pill_width("highlight"), 9.0 * 8.0 + 16.0);
-        assert_eq!(pill_width("醫學名詞"), 4.0 * 15.0 + 16.0);
-        assert_eq!(pill_width(&"long ".repeat(80)), PILL_MAX_W);
-        // Only the first line counts.
-        assert_eq!(pill_width("highlight\nand a much longer second line of text"), 88.0);
+    fn snippet_collapses_whitespace_and_truncates() {
+        assert_eq!(snippet("  hello\n  world "), "hello world");
+        assert_eq!(snippet(&"字".repeat(40)), format!("{}…", "字".repeat(SNIPPET_CHARS)));
     }
 }

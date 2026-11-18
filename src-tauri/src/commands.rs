@@ -681,10 +681,23 @@ pub fn route_text_from_other_apps_with(app: &AppHandle, force_choose: bool) {
     let app2 = app.clone();
     match target {
         Some(id) => {
-            let _ = app.run_on_main_thread(move || {
-                if let Err(e) = pick_destination_impl(&app2, &id, None) {
-                    log::warn!("auto-send to {} failed: {}", id, e);
+            // Sent without the picker: confirm with a chip beside the pointer.
+            let cursor = crate::panel::get_cursor_topleft_pos();
+            let text = app
+                .try_state::<PickerState>()
+                .and_then(|s| s.0.lock().ok().and_then(|g| match &g.payload {
+                    Some(Payload::Text { text }) => Some(text.clone()),
+                    _ => None,
+                }))
+                .unwrap_or_default();
+            let dest = dests.iter().find(|d| d.id == id).cloned();
+            let _ = app.run_on_main_thread(move || match pick_destination_impl(&app2, &id, None) {
+                Ok(()) => {
+                    if let Some(dest) = dest {
+                        crate::panel::lookup_highlight::show_sent(&app2, cursor, &dest, &text);
+                    }
                 }
+                Err(e) => log::warn!("auto-send to {} failed: {}", id, e),
             });
         }
         None => {
@@ -813,9 +826,24 @@ pub fn set_viewer_width(app: AppHandle, preset: String) {
     };
     let viewer_width = (total_width - crate::panel::TAB_BAR_WIDTH).max(200.0);
     crate::panel::set_width_preset(&preset);
+    crate::panel::set_top_ratio(None);
     crate::panel::set_viewer_width_value(viewer_width);
     crate::panel::set_height_ratio(height_ratio);
     crate::panel::resize_panels(&app, viewer_width);
+}
+
+/// Resize grip drag from grip.html: phase "start" | "move" | "end"; dx/dy are
+/// points moved since the drag began.
+#[tauri::command]
+pub fn resize_drag(app: AppHandle, phase: String, dx: f64, dy: f64) {
+    match phase.as_str() {
+        "start" => crate::panel::grip_drag_start(),
+        "move" => crate::panel::grip_drag_move(&app, dx, dy),
+        _ => {
+            crate::panel::grip_drag_move(&app, dx, dy);
+            crate::panel::grip_drag_end();
+        }
+    }
 }
 
 #[tauri::command]

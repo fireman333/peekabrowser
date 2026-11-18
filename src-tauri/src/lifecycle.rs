@@ -257,6 +257,9 @@ pub fn close_pages(app: &AppHandle, ids: &[String]) {
     if removed.is_empty() {
         return;
     }
+    // Keep the chrome up while the closed page's slot is released and the
+    // next page is shown (otherwise it blinks out and back in).
+    crate::panel::hold_chrome(next.is_some());
     for p in removed {
         set_draft(&p.id, false);
         if let Some(l) = p.label {
@@ -269,6 +272,9 @@ pub fn close_pages(app: &AppHandle, ids: &[String]) {
         }
         None => emit_now(app),
     }
+    crate::panel::hold_chrome(false);
+    crate::panel::sync_chrome(app);
+    resync_chrome_later(app);
 }
 
 /// ⌘⇧T / ⋯ menu: reopen the most recently closed tab in its destination.
@@ -439,6 +445,9 @@ pub fn remove_pages_for_dest(app: &AppHandle, dest_id: &str) {
         let removed = mgr.remove_pages_for_dest(dest_id);
         (removed, if had_active { mgr.active_page_id.clone() } else { None })
     };
+    // Keep the chrome up while the closed page's slot is released and the
+    // next page is shown (otherwise it blinks out and back in).
+    crate::panel::hold_chrome(next.is_some());
     for p in removed {
         set_draft(&p.id, false);
         if let Some(l) = p.label {
@@ -451,6 +460,9 @@ pub fn remove_pages_for_dest(app: &AppHandle, dest_id: &str) {
         }
         None => emit_now(app),
     }
+    crate::panel::hold_chrome(false);
+    crate::panel::sync_chrome(app);
+    resync_chrome_later(app);
 }
 
 /// Return a slot to the pool and end any work tied to the page.
@@ -658,4 +670,15 @@ pub fn link_query(app: &AppHandle, page_id: &str, record_id: &str) {
     if let Ok(mut m) = app.state::<Mgr>().lock() {
         m.set_query(page_id, record_id);
     }
+}
+
+/// Hiding a closed (key) page lets AppKit reshuffle window order after the
+/// close returns; re-check the top chrome once that has settled.
+fn resync_chrome_later(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(250));
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || crate::panel::sync_chrome(&app2));
+    });
 }

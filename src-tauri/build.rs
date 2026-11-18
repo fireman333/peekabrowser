@@ -10,7 +10,7 @@ fn main() {
     .expect("failed to run tauri-build");
 }
 
-const COMMANDS: [&str; 70] = [
+const COMMANDS: [&str; 71] = [
     "toggle_sidebar",
     "toggle_pin",
     "is_pinned",
@@ -28,6 +28,7 @@ const COMMANDS: [&str; 70] = [
     "send_to_active",
     "get_clipboard_text",
     "set_viewer_width",
+    "resize_drag",
     "get_picker_data",
     "pick_destination",
     "hide_picker_panel",

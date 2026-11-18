@@ -22,6 +22,7 @@ permissions = [
   "allow-send-to-active",
   "allow-get-clipboard-text",
   "allow-set-viewer-width",
+  "allow-resize-drag",
   "allow-get-picker-data",
   "allow-pick-destination",
   "allow-hide-picker-panel",

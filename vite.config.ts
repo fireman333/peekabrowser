@@ -32,6 +32,7 @@ export default defineConfig(async () => ({
         records: resolve(__dirname, "records.html"),
         chrome: resolve(__dirname, "chrome.html"),
         highlight: resolve(__dirname, "highlight.html"),
+        grip: resolve(__dirname, "grip.html"),
       },
     },
   },

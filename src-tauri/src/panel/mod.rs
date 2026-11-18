@@ -307,6 +307,14 @@ const CHROME_MARGIN: f64 = 8.0;
 
 /// Whether the tab row (second chrome row) is shown.
 static CHROME_TAB_ROW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// While set, chrome layout is frozen (a tab close is swapping pages, so the
+/// brief "no active page" moment must not hide the chrome).
+static CHROME_HOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn hold_chrome(hold: bool) {
+    CHROME_HOLD.store(hold, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Whether the chrome panel is currently ordered in.
 static CHROME_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Viewer slots currently loading (page-load Started without Finished).
@@ -330,6 +338,7 @@ pub fn set_width_preset(preset: &str) {
     let p = match preset {
         "short" => "short",
         "long" => "long",
+        "custom" => "custom",
         _ => "medium",
     };
     if let Ok(mut g) = WIDTH_PRESET.lock() {
@@ -419,24 +428,173 @@ pub fn set_chrome_tab_row(app: &AppHandle, show: bool) {
 /// keyboard focus stays in the page.
 pub fn sync_chrome(app: &AppHandle) {
     use std::sync::atomic::Ordering;
+    if CHROME_HOLD.load(Ordering::SeqCst) {
+        return;
+    }
     let want = is_panel_visible(app) && get_active_page_label().is_some();
     if want {
         let sx = current_screen_x();
         let (_, panel_y) = panel_geometry();
+        // The cached flag can go stale (AppKit may order the panel out on its
+        // own, e.g. while the key page window is hidden during ⌘W), so also
+        // trust the window's real visibility.
+        let mut visible = false;
         if let Some(w) = app.get_webview_window(CHROME_LABEL) {
             let _ = w.set_position(tauri::LogicalPosition::new(sx + TAB_BAR_WIDTH, panel_y));
             let _ = w.set_size(tauri::LogicalSize::new(get_viewer_width(), chrome_height()));
+            visible = w.is_visible().unwrap_or(false);
         }
-        if !CHROME_SHOWN.swap(true, Ordering::SeqCst) {
+        let was_shown = CHROME_SHOWN.swap(true, Ordering::SeqCst);
+        if !was_shown || !visible {
+            if was_shown {
+                log::info!("chrome: panel was ordered out behind our back; ordering it in again");
+            }
             if let Ok(p) = app.get_webview_panel(CHROME_LABEL) {
                 p.order_front_regardless();
             }
         }
-    } else if CHROME_SHOWN.swap(false, Ordering::SeqCst) {
-        if let Ok(p) = app.get_webview_panel(CHROME_LABEL) {
-            p.order_out(None);
+        sync_grip(app, true);
+    } else {
+        if CHROME_SHOWN.swap(false, Ordering::SeqCst) {
+            if let Ok(p) = app.get_webview_panel(CHROME_LABEL) {
+                p.order_out(None);
+            }
+        }
+        sync_grip(app, false);
+    }
+}
+
+// ─── Resize grip (iPadOS-style arc on the bottom-right corner) ──────────
+
+pub const GRIP_LABEL: &str = "grip";
+/// Grip window size; the page corner sits GRIP_INSET points into it, so the
+/// arc hugs the corner from outside.
+const GRIP_SIZE: f64 = 36.0;
+const GRIP_INSET: f64 = 22.0;
+const MIN_VIEWER_WIDTH: f64 = 320.0;
+const MIN_PANEL_HEIGHT: f64 = 320.0;
+
+/// Top of the panel as a fraction of the screen height once the user has
+/// dragged the grip (None = vertically centred, as the S/M/L presets are).
+static CURRENT_TOP_RATIO: Mutex<Option<f64>> = Mutex::new(None);
+/// (viewer width, panel height, panel top) when the grip drag began.
+static GRIP_DRAG_START: Mutex<Option<(f64, f64, f64)>> = Mutex::new(None);
+
+pub fn set_top_ratio(r: Option<f64>) {
+    if let Ok(mut g) = CURRENT_TOP_RATIO.lock() {
+        *g = r;
+    }
+}
+
+fn top_ratio() -> Option<f64> {
+    CURRENT_TOP_RATIO.lock().ok().and_then(|g| *g)
+}
+
+fn sync_grip(app: &AppHandle, show: bool) {
+    let Ok(p) = app.get_webview_panel(GRIP_LABEL) else { return };
+    if !show {
+        p.order_out(None);
+        return;
+    }
+    let (px, _, vw, _) = page_frame();
+    let (panel_height, panel_y) = panel_geometry();
+    if let Some(w) = app.get_webview_window(GRIP_LABEL) {
+        let _ = w.set_position(tauri::LogicalPosition::new(
+            px + vw - GRIP_INSET,
+            panel_y + panel_height - GRIP_INSET,
+        ));
+        if !w.is_visible().unwrap_or(false) {
+            p.order_front_regardless();
         }
     }
+}
+
+/// Cursor within this distance of the page's bottom-right corner reveals the
+/// grip (iPadOS shows its arc only when you reach for the corner).
+const GRIP_REVEAL_DIST: f64 = 44.0;
+static GRIP_NEAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn grip_is_near(cursor: (f64, f64), corner: (f64, f64)) -> bool {
+    (cursor.0 - corner.0).abs() <= GRIP_REVEAL_DIST && (cursor.1 - corner.1).abs() <= GRIP_REVEAL_DIST
+}
+
+/// Called with every cursor observation while the panel is shown; tells the
+/// grip to fade its arc in or out when the cursor crosses the reveal zone.
+/// A drag keeps it shown.
+pub fn note_cursor_for_grip(app: &AppHandle, cx: f64, cy: f64) {
+    use std::sync::atomic::Ordering;
+    use tauri::Emitter;
+    let (_, _, right, bottom) = panel_bounds();
+    let dragging = GRIP_DRAG_START.lock().map(|g| g.is_some()).unwrap_or(false);
+    let near = dragging || (get_active_page_label().is_some() && grip_is_near((cx, cy), (right, bottom)));
+    if GRIP_NEAR.swap(near, Ordering::SeqCst) != near {
+        let _ = app.emit_to(GRIP_LABEL, "grip-near", near);
+    }
+}
+
+/// Create the hidden resize grip panel (called once at launch).
+pub fn create_grip_panel(app: &AppHandle) -> tauri::Result<()> {
+    let w = WebviewWindowBuilder::new(app, GRIP_LABEL, WebviewUrl::App("grip.html".into()))
+        .title("Peekabrowser Resize")
+        .inner_size(GRIP_SIZE, GRIP_SIZE)
+        .position(-3000.0, -3000.0)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible(false)
+        .build()?;
+    setup_non_activating_panel(&w)?;
+    // Above the page windows (same floating level otherwise).
+    if let Ok(p) = app.get_webview_panel(GRIP_LABEL) {
+        p.set_level(NS_FLOATING_WINDOW_LEVEL + 1);
+    }
+    Ok(())
+}
+
+/// Grip drag began: remember the frame it is measured from.
+pub fn grip_drag_start() {
+    let (h, y) = panel_geometry();
+    if let Ok(mut g) = GRIP_DRAG_START.lock() {
+        *g = Some((get_viewer_width(), h, y));
+    }
+}
+
+pub fn grip_drag_end() {
+    if let Ok(mut g) = GRIP_DRAG_START.lock() {
+        *g = None;
+    }
+}
+
+/// New (viewer width, panel height) for a drag of (dx, dy) from `start`,
+/// keeping the top-left fixed and the panel on screen. Pure, for tests.
+pub fn grip_size_for(
+    start: (f64, f64, f64),
+    dx: f64,
+    dy: f64,
+    screen: (f64, f64, f64, f64),
+) -> (f64, f64) {
+    let (w0, h0, top) = start;
+    let (sx, sy, sw, sh) = screen;
+    let max_w = (sx + sw - (sx + TAB_BAR_WIDTH) - 8.0).max(MIN_VIEWER_WIDTH);
+    let max_h = (sy + sh - top - 4.0).max(MIN_PANEL_HEIGHT);
+    ((w0 + dx).clamp(MIN_VIEWER_WIDTH, max_w), (h0 + dy).clamp(MIN_PANEL_HEIGHT, max_h))
+}
+
+/// Grip moved by (dx, dy) points since the drag began.
+pub fn grip_drag_move(app: &AppHandle, dx: f64, dy: f64) {
+    let Some(start) = GRIP_DRAG_START.lock().ok().and_then(|g| *g) else { return };
+    let (sw, sh) = current_screen_size();
+    let sx = current_screen_x();
+    let sy = CURRENT_SCREEN_Y.lock().map(|g| *g).unwrap_or(0.0);
+    let (w, h) = grip_size_for(start, dx, dy, (sx, sy, sw, sh));
+    set_width_preset("custom");
+    set_viewer_width_value(w);
+    set_height_ratio(h / sh);
+    set_top_ratio(Some((start.2 - sy) / sh));
+    resize_panels(app, w);
 }
 
 /// Create the top chrome panel (hidden until a page is shown).
@@ -480,7 +638,10 @@ pub fn panel_geometry() -> (f64, f64) {
     let screen_y = CURRENT_SCREEN_Y.lock().map(|g| *g).unwrap_or(0.0);
     let ratio = get_height_ratio();
     let panel_height = screen_height * ratio;
-    let panel_y = screen_y + (screen_height - panel_height) / 2.0;
+    let panel_y = match top_ratio() {
+        Some(t) => screen_y + (t * screen_height).clamp(0.0, (screen_height - panel_height).max(0.0)),
+        None => screen_y + (screen_height - panel_height) / 2.0,
+    };
     (panel_height, panel_y)
 }
 
@@ -1138,5 +1299,40 @@ pub fn resize_panels(app: &AppHandle, viewer_width: f64) {
             let _ = w.set_size(tauri::LogicalSize::new(viewer_width, page_height));
             let _ = w.set_position(tauri::LogicalPosition::new(x, y));
         }
+    }
+}
+
+#[cfg(test)]
+mod grip_tests {
+    use super::*;
+
+    const SCREEN: (f64, f64, f64, f64) = (0.0, 0.0, 1440.0, 900.0);
+
+    #[test]
+    fn grip_follows_the_drag() {
+        assert_eq!(grip_size_for((600.0, 600.0, 150.0), 40.0, 30.0, SCREEN), (640.0, 630.0));
+        assert_eq!(grip_size_for((600.0, 600.0, 150.0), -40.0, -30.0, SCREEN), (560.0, 570.0));
+    }
+
+    #[test]
+    fn grip_respects_minimums_and_screen_edges() {
+        let (w, h) = grip_size_for((600.0, 600.0, 150.0), -2000.0, -2000.0, SCREEN);
+        assert_eq!((w, h), (MIN_VIEWER_WIDTH, MIN_PANEL_HEIGHT));
+        let (w, h) = grip_size_for((600.0, 600.0, 150.0), 5000.0, 5000.0, SCREEN);
+        assert_eq!(w, 1440.0 - TAB_BAR_WIDTH - 8.0);
+        assert_eq!(h, 900.0 - 150.0 - 4.0);
+    }
+}
+
+#[cfg(test)]
+mod grip_reveal_tests {
+    use super::*;
+
+    #[test]
+    fn grip_reveals_only_near_the_corner() {
+        assert!(grip_is_near((990.0, 790.0), (1000.0, 800.0)));
+        assert!(grip_is_near((1030.0, 830.0), (1000.0, 800.0)));
+        assert!(!grip_is_near((900.0, 800.0), (1000.0, 800.0)));
+        assert!(!grip_is_near((1000.0, 700.0), (1000.0, 800.0)));
     }
 }
