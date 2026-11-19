@@ -10,7 +10,7 @@ fn main() {
     .expect("failed to run tauri-build");
 }
 
-const COMMANDS: [&str; 78] = [
+const COMMANDS: [&str; 84] = [
     "toggle_sidebar",
     "toggle_pin",
     "is_pinned",
@@ -81,6 +81,12 @@ const COMMANDS: [&str; 78] = [
     "open_page_in_browser",
     "reload_page",
     "show_chrome_menu",
+    "get_catalog",
+    "add_catalog_entry",
+    "open_add_site",
+    "take_add_site_request",
+    "can_ask_elsewhere",
+    "show_ask_elsewhere_menu",
     "show_tab_menu",
     "get_prompt_templates",
     "set_prompt_profession",

@@ -93,6 +93,110 @@
       stop: ['button[aria-label*="Stop"]'],
       response: ['.prose', 'article'],
       knowsCompletion: false
+    },
+    // destination-catalog: inject-only catalogue sites (data only; selectors not verified on
+    // device). A site without a send button gets Enter after the send retries.
+    {
+      id: 'deepseek',
+      match: function (h) { return h === 'deepseek.com' || h.endsWith('.deepseek.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['#chat-input', 'textarea:not([readonly])', '[contenteditable="true"]'],
+      send: ['button[type="submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="發送"]', 'button[aria-label*="送出"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'poe',
+      match: function (h) { return h === 'poe.com' || h.endsWith('.poe.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['textarea[class*="GrowingTextArea"]', 'textarea:not([readonly])', '[contenteditable="true"]'],
+      send: ['button[type="submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="發送"]', 'button[aria-label*="送出"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'kimi',
+      match: function (h) { return h === 'kimi.com' || h.endsWith('.kimi.com') || h === 'kimi.moonshot.cn' || h.endsWith('.kimi.moonshot.cn'); },
+      supportsText: true, supportsImage: false,
+      input: ['div.chat-input-editor[contenteditable="true"]', '[contenteditable="true"]', 'textarea:not([readonly])'],
+      send: ['button[type="submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="發送"]', 'button[aria-label*="送出"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'qwen',
+      match: function (h) { return h === 'qwen.ai' || h.endsWith('.qwen.ai'); },
+      supportsText: true, supportsImage: false,
+      input: ['#chat-input', 'textarea:not([readonly])', '[contenteditable="true"]'],
+      send: ['button[type="submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="發送"]', 'button[aria-label*="送出"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'mistral',
+      match: function (h) { return h === 'chat.mistral.ai'; },
+      supportsText: true, supportsImage: false,
+      input: ['textarea:not([readonly])', 'div.ProseMirror[contenteditable="true"]', '[contenteditable="true"]'],
+      send: ['button[type="submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="發送"]', 'button[aria-label*="送出"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'grok',
+      match: function (h) { return h === 'grok.com' || h.endsWith('.grok.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['textarea:not([readonly])', 'div.ProseMirror[contenteditable="true"]', '[contenteditable="true"]'],
+      send: ['button[type="submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="發送"]', 'button[aria-label*="送出"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      // small-fixes D10 (iPad catalogue): Microsoft Copilot chat (copilot.com links "Chat" to
+      // m365.cloud.microsoft/chat), used after the user signs in.
+      id: 'copilot',
+      match: function (h) { return h === 'm365.cloud.microsoft' || h === 'copilot.microsoft.com' || h === 'copilot.com' || h.endsWith('.copilot.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['#m365-chat-editor-target-element', 'textarea#userInput', 'textarea[data-testid="composer-input"]', 'div[role="textbox"][contenteditable="true"]', 'textarea:not([readonly])', '[contenteditable="true"]'],
+      send: ['button[data-testid="submit-button"]', 'button[aria-label*="Submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="傳送"]', 'button[aria-label*="送出"]', 'button[type="submit"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      // add-site-sheet D1: UpToDate Expert AI (ai.uptodate.com only; the UpToDate search entry on
+      // www.uptodate.com stays a URL template). Used after the user signs in.
+      id: 'uptodate-expert-ai',
+      match: function (h) { return h === 'ai.uptodate.com'; },
+      supportsText: true, supportsImage: false,
+      input: ['textarea[placeholder*="Ask"]', 'textarea[placeholder*="question"]', 'textarea:not([readonly])', 'div[role="textbox"][contenteditable="true"]', '[contenteditable="true"]'],
+      send: ['button[data-testid="send-button"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="Submit"]', 'button[aria-label*="Ask"]', 'button[aria-label*="傳送"]', 'button[aria-label*="送出"]', 'button[type="submit"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'huggingchat',
+      match: function (h) { return h === 'huggingface.co'; },
+      supportsText: true, supportsImage: false,
+      input: ['textarea:not([readonly])', 'div[contenteditable="true"]', '[contenteditable="true"]'],
+      send: ['button[type="submit"]', 'button[aria-label*="Send"]', 'button[aria-label*="send"]', 'button[aria-label*="發送"]', 'button[aria-label*="送出"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'embase',
+      match: function (h) { return h === 'embase.com' || h.endsWith('.embase.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['input[type="search"]:not([readonly])', 'input[name="q"]', 'input[type="text"]:not([readonly])', 'textarea:not([readonly])'],
+      send: ['button[type="submit"]', 'button[aria-label*="Search"]', 'button[aria-label*="search"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'dynamed',
+      match: function (h) { return h === 'dynamed.com' || h.endsWith('.dynamed.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['input[type="search"]:not([readonly])', 'input[name="q"]', 'input[type="text"]:not([readonly])', 'textarea:not([readonly])'],
+      send: ['button[type="submit"]', 'button[aria-label*="Search"]', 'button[aria-label*="search"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'micromedex',
+      match: function (h) { return h === 'micromedexsolutions.com' || h.endsWith('.micromedexsolutions.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['input[type="search"]:not([readonly])', 'input[name="q"]', 'input[type="text"]:not([readonly])', 'textarea:not([readonly])'],
+      send: ['button[type="submit"]', 'button[aria-label*="Search"]', 'button[aria-label*="search"]'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'airiti',
+      match: function (h) { return h === 'airitilibrary.com' || h.endsWith('.airitilibrary.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['input[id="_Search_檢索列"]', 'input[type="search"]:not([readonly])'],
+      send: ['#_Search_文章模糊檢索_item'], stop: [], response: [], knowsCompletion: false
+    },
+    {
+      id: 'deepl',
+      match: function (h) { return h === 'deepl.com' || h.endsWith('.deepl.com'); },
+      supportsText: true, supportsImage: false,
+      input: ['d-textarea[data-testid="translator-source-input"] [contenteditable="true"]', '[contenteditable="true"]', 'textarea:not([readonly])'],
+      send: [], stop: [], response: [], knowsCompletion: false
     }
   ];
   var GENERIC = {

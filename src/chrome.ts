@@ -145,6 +145,8 @@ function renderButtons() {
   for (const id of ["back-btn", "forward-btn", "reload-btn", "open-browser-btn", "save-btn"]) {
     ($(id) as HTMLButtonElement).disabled = !loaded;
   }
+  // "Ask elsewhere": only on a tab opened by a query (iOS parity).
+  $("ask-elsewhere-btn").classList.toggle("hidden", !(a && a.query_id));
   const canNew = !!a && state.can_new_tab;
   for (const id of ["new-tab-btn", "tab-plus"]) {
     const b = $(id) as HTMLButtonElement;
@@ -308,6 +310,10 @@ function setupDom() {
   on("reload-btn", () => invoke("reload_active_page").catch(() => {}));
   on("new-tab-btn", newTab);
   on("tab-plus", newTab);
+  on("ask-elsewhere-btn", () => {
+    const r = $("ask-elsewhere-btn").getBoundingClientRect();
+    invoke("show_ask_elsewhere_menu", { x: r.left, y: r.bottom + 4 }).catch((e) => announce(String(e)));
+  });
   on("more-btn", () => {
     const r = $("more-btn").getBoundingClientRect();
     invoke("show_chrome_menu", { x: r.left, y: r.bottom + 4 }).catch(() => {});

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-take-add-site-request"
+description = "Enables the take_add_site_request command without any pre-configured scope."
+commands.allow = ["take_add_site_request"]
+
+[[permission]]
+identifier = "deny-take-add-site-request"
+description = "Denies the take_add_site_request command without any pre-configured scope."
+commands.deny = ["take_add_site_request"]

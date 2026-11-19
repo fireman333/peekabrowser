@@ -25,6 +25,7 @@ const PATHS: Record<string, string> = {
   "sf-save": '<path d="M12 4v10"/><path d="M8 10.5l4 4 4-4"/><path d="M5 14.5v4A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-4"/>',
   "sf-ellipsis": '<circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   "sf-plus": '<path d="M12 5v14M5 12h14"/>',
+  "sf-branch": '<path d="M12 20.5V12"/><path d="M12 12L6.5 6M12 12l5.5-6"/><path d="M5 9.5V4.5h5M19 9.5V4.5h-5"/>',
   "sf-safari": '<circle cx="12" cy="12" r="8.5"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
   "sf-xmark": '<path d="M7.5 7.5l9 9M16.5 7.5l-9 9"/>',
   "sf-text-quote": '<path d="M4.5 6.5v11"/><path d="M8.5 7h11M8.5 12h11M8.5 17h7"/>',

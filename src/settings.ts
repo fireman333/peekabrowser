@@ -12,6 +12,24 @@ interface Destination {
   icon: string;
   order: number;
   clip_prompt: string;
+  url_template?: string;
+}
+
+interface CatalogEntry {
+  id: string;
+  name: string;
+  group: string;
+  home: string;
+  template: string | null;
+  login: boolean;
+  unverified: boolean;
+  built_in: boolean;
+  added: boolean;
+}
+
+interface CatalogSection {
+  group: string;
+  entries: CatalogEntry[];
 }
 
 interface ShortcutConfig {
@@ -21,16 +39,11 @@ interface ShortcutConfig {
 }
 
 const PRESETS = [
-  { name: "Google", url: "https://www.google.com", icon: "" },
-  { name: "ChatGPT", url: "https://chat.openai.com", icon: "" },
-  { name: "Claude", url: "https://claude.ai", icon: "" },
-  { name: "Gemini", url: "https://gemini.google.com", icon: "" },
-  { name: "Perplexity", url: "https://www.perplexity.ai", icon: "" },
+  // Shortcuts for the custom form; everyday sites come from the catalogue above.
   { name: "Claude Project", url: "https://claude.ai/project/", icon: "" },
   { name: "ChatGPT GPT", url: "https://chatgpt.com/g/", icon: "" },
   { name: "Gemini Gem", url: "https://gemini.google.com/gem/", icon: "" },
   { name: "Perplexity Space", url: "https://www.perplexity.ai/collections/", icon: "" },
-  { name: "OpenEvidence", url: "https://www.openevidence.com", icon: "" },
   { name: "Calendar", url: "system://calendar", icon: "📅" },
   { name: "Reminders", url: "system://reminders", icon: "☑️" },
 ];
@@ -462,7 +475,7 @@ async function moveDestination(id: string, direction: number) {
 function startEdit(d: Destination) {
   editingId = d.id;
   $<HTMLInputElement>("new-name").value = d.name;
-  $<HTMLInputElement>("new-url").value = d.url;
+  $<HTMLInputElement>("new-url").value = d.url_template || d.url;
   $<HTMLInputElement>("new-icon").value = d.icon;
   $<HTMLTextAreaElement>("new-clip-prompt").value = d.clip_prompt || "";
   loadSitePrompts(d.id, d.url);
@@ -503,11 +516,86 @@ function renderPresets() {
   presetChips.appendChild(addChip);
 }
 
+// ─── Add a site: catalogue ─────────────────────────────────
+
+let catalogQuery = "";
+
+function hostOf(url: string): string {
+  try { return new URL(url.replace("{q}", "x")).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
+async function renderCatalog() {
+  const list = $("catalog-list");
+  let sections: CatalogSection[] = [];
+  try {
+    sections = await invoke<CatalogSection[]>("get_catalog", { query: catalogQuery });
+  } catch { /* outside Tauri */ }
+  list.innerHTML = "";
+  if (sections.length === 0) {
+    list.innerHTML = `<div class="group"><div class="dest-empty">${t("cat.noMatch")}</div></div>`;
+    return;
+  }
+  for (const sec of sections) {
+    const head = document.createElement("h3");
+    head.className = "sub-title";
+    head.textContent = t(`cat.g.${sec.group}` as Parameters<typeof t>[0]);
+    const group = document.createElement("div");
+    group.className = "group catalog-group";
+    for (const e of sec.entries) {
+      const row = document.createElement("div");
+      row.className = "dest-item catalog-row";
+      const badges = [
+        e.template ? "" : `<span class="badge">${t("cat.fills")}</span>`,
+        e.login ? `<span class="badge">${t("cat.login")}</span>` : "",
+        e.unverified ? `<span class="badge muted">${t("cat.unverified")}</span>` : "",
+      ].join("");
+      row.innerHTML = `
+        ${iconHtml({ id: e.id, name: e.name, url: e.home, icon: "", order: 0, clip_prompt: "" })}
+        <div class="info">
+          <div class="name">${escapeHtml(e.name)}</div>
+          <div class="sub">${escapeHtml(hostOf(e.template || e.home))}${badges}</div>
+        </div>
+        <button type="button" class="${e.added ? "added-label" : "btn-add"}" ${e.added ? "disabled" : ""}>${e.added ? t("cat.added") : t("cat.add")}</button>
+      `;
+      const btn = row.querySelector("button")!;
+      if (!e.added) {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await invoke<Destination>("add_catalog_entry", { id: e.id });
+            await loadDestinations();
+            await renderCatalog();
+          } catch (err) {
+            btn.disabled = false;
+            alert(t("dest.saveFailed") + err);
+          }
+        });
+      }
+      group.appendChild(row);
+    }
+    list.append(head, group);
+  }
+}
+
+function openAddSite() {
+  resetForm();
+  loadSitePrompts(null, "");
+  catalogQuery = "";
+  $<HTMLInputElement>("catalog-search").value = "";
+  showSite();
+  renderCatalog();
+  $<HTMLInputElement>("catalog-search").focus();
+}
+
 function setupListeners() {
-  addBtn.addEventListener("click", () => {
-    resetForm();
-    loadSitePrompts(null, "");
-    showSite();
+  addBtn.addEventListener("click", openAddSite);
+  listen("open-add-site", openAddSite).catch(() => {});
+  invoke<boolean>("take_add_site_request").then((yes) => { if (yes) openAddSite(); }).catch(() => {});
+  const search = $<HTMLInputElement>("catalog-search");
+  let searchTimer = 0;
+  search.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => { catalogQuery = search.value; renderCatalog(); }, 120);
   });
 
   $("reorder-btn").addEventListener("click", () => {

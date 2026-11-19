@@ -90,7 +90,8 @@ function renderRail() {
   const system = sorted.filter((d) => isSystemDest(d));
 
   regular.forEach((dest) => tabList.appendChild(railItem(dest)));
-  if (system.length > 0 && regular.length > 0) {
+  tabList.appendChild(addSiteItem());
+  if (system.length > 0) {
     const sep = document.createElement("div");
     sep.className = "rail-divider";
     sep.setAttribute("role", "separator");
@@ -98,6 +99,21 @@ function renderRail() {
   }
   system.forEach((dest) => tabList.appendChild(railItem(dest)));
   tabList.querySelector(".rail-item.selected")?.scrollIntoView({ block: "nearest" });
+}
+
+/** "+" at the end of the sites (above Calendar / Reminders): Add a site. */
+function addSiteItem(): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "rail-item rail-add";
+  btn.setAttribute("role", "listitem");
+  btn.setAttribute("aria-label", t("rail.addSite"));
+  btn.title = t("rail.addSite");
+  const iconWrap = document.createElement("span");
+  iconWrap.className = "rail-icon";
+  iconWrap.innerHTML = '<span class="add-tile" aria-hidden="true">+</span>';
+  btn.append(iconWrap);
+  btn.addEventListener("click", () => invoke("open_add_site").catch(() => {}));
+  return btn;
 }
 
 /** Tab indicator: none for one tab, up to three dots, a number from four on. */

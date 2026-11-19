@@ -87,13 +87,16 @@ pub fn add_destination(
 
     let id = uuid::Uuid::new_v4().to_string();
     let order = dest_manager.get_all().len();
+    let (url, url_template) = crate::destinations::catalog::split_custom(&validated_url);
     let dest = Destination {
         id,
         name,
-        url: validated_url,
+        url,
         icon,
         order,
         clip_prompt: clip_prompt.unwrap_or_default(),
+        url_template,
+        catalog_id: None,
     };
     dest_manager.add(dest.clone());
 
@@ -820,6 +823,20 @@ pub fn pick_destination_impl(app: &AppHandle, id: &str, text: Option<String>, pr
     });
     if let Some(w) = app.get_webview_window("records-window") {
         let _ = w.emit("records-changed", ());
+    }
+
+    // Search-address sites: the results page opens directly with the query.
+    if let (Some(template), Payload::Text { text }) = (dest.url_template.as_deref(), &payload) {
+        let full = crate::prompts::compose(&lens_prompt, &dest.clip_prompt, text);
+        let url = crate::destinations::catalog::fill_template(template, &full);
+        let page = crate::lifecycle::open_new_page_at(&app, &dest, &url)?;
+        if let Some(rid) = &record_id {
+            crate::lifecycle::link_query(&app, &page.id, rid);
+            if let Some(store) = app.try_state::<crate::records::RecordStore>() {
+                let _ = store.set_query_status(rid, "injected");
+            }
+        }
+        return Ok(());
     }
 
     let page = crate::lifecycle::open_new_page(&app, &dest)?;
@@ -1714,6 +1731,11 @@ pub fn handle_chrome_menu(app: &AppHandle, id: &str) {
         "copy-url" => {
             let _ = copy_page_url(app.clone(), None);
         }
+        r if r.starts_with("ask:") => {
+            if let Err(err) = ask_elsewhere(app, &r["ask:".len()..]) {
+                log::warn!("ask elsewhere: {}", err);
+            }
+        }
         "close-tab" => {
             let id = mgr.lock().ok().and_then(|m| m.active_page_id.clone());
             if let Some(id) = id {
@@ -1782,4 +1804,179 @@ mod chrome_tests {
         // An explicit scheme is kept as typed.
         assert_eq!(address_to_url("https://localhost:3000").as_deref(), Some("https://localhost:3000/"));
     }
+}
+
+// ─── Add a site: built-in catalogue ───────────────────────────
+
+#[derive(Serialize)]
+pub struct CatalogRow {
+    #[serde(flatten)]
+    entry: crate::destinations::catalog::Entry,
+    added: bool,
+}
+
+#[derive(Serialize)]
+pub struct CatalogSection {
+    group: crate::destinations::catalog::Group,
+    entries: Vec<CatalogRow>,
+}
+
+/// The catalogue grouped for "Add a site"; `query` filters by name/address
+/// (groups without a match are left out).
+#[tauri::command]
+pub fn get_catalog(dest_manager: State<DestinationManager>, query: Option<String>) -> Vec<CatalogSection> {
+    use crate::destinations::catalog::{self, Group};
+    let list = dest_manager.get_all();
+    let q = query.unwrap_or_default();
+    let all = catalog::entries();
+    Group::ALL
+        .iter()
+        .filter_map(|g| {
+            let entries: Vec<CatalogRow> = all
+                .iter()
+                .filter(|e| e.group == *g && catalog::matches(e, &q))
+                .map(|e| CatalogRow { added: e.is_added(&list), entry: e.clone() })
+                .collect();
+            (!entries.is_empty()).then_some(CatalogSection { group: *g, entries })
+        })
+        .collect()
+}
+
+/// Add a catalogue entry (a built-in comes back with its own id). Adding one
+/// that is already there returns the existing destination.
+#[tauri::command]
+pub fn add_catalog_entry(app: AppHandle, dest_manager: State<DestinationManager>, id: String) -> Result<Destination, String> {
+    let entry = crate::destinations::catalog::entry(&id).ok_or_else(|| format!("unknown site '{}'", id))?;
+    let list = dest_manager.get_all();
+    if let Some(d) = list
+        .iter()
+        .find(|d| d.catalog_id.as_deref() == Some(entry.id) || (entry.built_in && d.id == entry.id))
+    {
+        return Ok(d.clone());
+    }
+    let mut dest = entry.make_destination();
+    if dest.id.is_empty() {
+        dest.id = uuid::Uuid::new_v4().to_string();
+    }
+    // New sites go after the regular ones, before Calendar / Reminders.
+    let regular = list.iter().filter(|d| !d.url.contains("system://")).count();
+    let mut ids: Vec<String> = list.iter().map(|d| d.id.clone()).collect();
+    ids.insert(regular.min(ids.len()), dest.id.clone());
+    dest_manager.add(dest.clone());
+    dest_manager.reorder(ids);
+    if let Some(sidebar) = app.get_webview_window(crate::panel::SIDEBAR_LABEL) {
+        let _ = sidebar.emit("destinations-changed", ());
+    }
+    Ok(dest_manager.get_by_id(&dest.id).unwrap_or(dest))
+}
+
+/// The rail's "+": open Settings on the "Add a site" page.
+#[tauri::command]
+pub fn open_add_site(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("settings-window") {
+        let _ = w.emit("open-add-site", ());
+        let _ = w.set_focus();
+        return;
+    }
+    ADD_SITE_ON_OPEN.store(true, std::sync::atomic::Ordering::SeqCst);
+    open_settings_window(app);
+}
+
+static ADD_SITE_ON_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Settings asks once at startup whether it was opened by the rail's "+".
+#[tauri::command]
+pub fn take_add_site_request() -> bool {
+    ADD_SITE_ON_OPEN.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
+// ─── Ask elsewhere ───────────────────────────────────────────
+
+/// The text the active page was opened by (its Records query), with the
+/// page's destination. None when the page was not opened by a text query.
+fn active_query(app: &AppHandle) -> Option<(String, String, String)> {
+    let (page_id, dest_id, query_id) = {
+        let m = app.state::<Mutex<WebViewTabManager>>();
+        let m = m.lock().ok()?;
+        let p = m.get_active_page()?;
+        (p.id.clone(), p.dest_id.clone(), p.query_id.clone()?)
+    };
+    let store = app.try_state::<crate::records::RecordStore>()?;
+    let text = store.get(&query_id).ok()??.selection_text?;
+    (!text.trim().is_empty()).then_some((page_id, dest_id, text))
+}
+
+/// Whether the active page has a query to ask elsewhere (button state).
+#[tauri::command]
+pub fn can_ask_elsewhere(app: AppHandle) -> bool {
+    active_query(&app).is_some()
+}
+
+/// Destinations other than the page's own, each with the open page that
+/// already answers the same text there (switch instead of re-asking).
+fn ask_elsewhere_items(app: &AppHandle, dest_id: &str, text: &str) -> Vec<(Destination, Option<String>)> {
+    let dests = app.state::<DestinationManager>().get_all();
+    let store = app.try_state::<crate::records::RecordStore>();
+    let pages: Vec<(String, String, Option<String>)> = app
+        .state::<Mutex<WebViewTabManager>>()
+        .lock()
+        .map(|m| m.pages.iter().map(|p| (p.id.clone(), p.dest_id.clone(), p.query_id.clone())).collect())
+        .unwrap_or_default();
+    let same_text = |qid: &Option<String>| {
+        qid.as_ref()
+            .and_then(|q| store.as_ref()?.get(q).ok()?)
+            .and_then(|r| r.selection_text)
+            .map(|t| t == text)
+            .unwrap_or(false)
+    };
+    dests
+        .into_iter()
+        .filter(|d| d.id != dest_id && !d.url.contains("system://"))
+        .map(|d| {
+            let answered = pages.iter().find(|(_, pd, q)| *pd == d.id && same_text(q)).map(|(id, _, _)| id.clone());
+            (d, answered)
+        })
+        .collect()
+}
+
+/// The "Ask elsewhere" menu under its toolbar button.
+#[tauri::command]
+pub fn show_ask_elsewhere_menu(app: AppHandle, x: f64, y: f64) -> Result<(), String> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let (_, dest_id, text) = active_query(&app).ok_or(tr("這個分頁不是由查詢開啟的", "This tab was not opened by a query"))?;
+    let e = |e: tauri::Error| e.to_string();
+    let preview: String = text.chars().take(40).collect::<String>().replace('\n', " ");
+    let preview = if text.chars().count() > 40 { format!("{}…", preview) } else { preview };
+    let title = MenuItem::with_id(&app, "chrome:ask-title", format!("{}：{}", tr("到別處問", "Ask elsewhere"), preview), false, None::<&str>).map_err(e)?;
+    let sep = PredefinedMenuItem::separator(&app).map_err(e)?;
+    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::new();
+    for (d, answered) in ask_elsewhere_items(&app, &dest_id, &text) {
+        let label = if answered.is_some() { format!("{}  ✓ {}", d.name, tr("已回答", "Answered")) } else { d.name.clone() };
+        items.push(MenuItem::with_id(&app, format!("chrome:ask:{}", d.id), label, true, None::<&str>).map_err(e)?);
+    }
+    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&title, &sep];
+    refs.extend(items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>));
+    let menu = Menu::with_items(&app, &refs).map_err(e)?;
+    popup(&app, menu, Some((x, y)))
+}
+
+/// A choice in the "Ask elsewhere" menu: switch to the page that already
+/// answers it, or send the same text to that destination in a new tab.
+pub fn ask_elsewhere(app: &AppHandle, target_dest: &str) -> Result<(), String> {
+    let (_, dest_id, text) = active_query(app).ok_or("no query")?;
+    let answered = ask_elsewhere_items(app, &dest_id, &text)
+        .into_iter()
+        .find(|(d, _)| d.id == target_dest)
+        .and_then(|(_, a)| a);
+    if let Some(page_id) = answered {
+        return crate::lifecycle::activate_page(app, &page_id);
+    }
+    let source_app = Some("Peekabrowser".to_string());
+    if let Some(state) = app.try_state::<PickerState>() {
+        if let Ok(mut s) = state.0.lock() {
+            s.payload = Some(Payload::Text { text });
+            s.source_app = source_app;
+        }
+    }
+    pick_destination_impl(app, target_dest, None, None)
 }

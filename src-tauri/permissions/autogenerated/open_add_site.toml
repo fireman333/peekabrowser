@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-add-site"
+description = "Enables the open_add_site command without any pre-configured scope."
+commands.allow = ["open_add_site"]
+
+[[permission]]
+identifier = "deny-open-add-site"
+description = "Denies the open_add_site command without any pre-configured scope."
+commands.deny = ["open_add_site"]

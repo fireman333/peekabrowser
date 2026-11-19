@@ -192,7 +192,13 @@
       <h1 id="form-title" data-i18n="s.site.addTitle"></h1>
 
       <section class="section" id="catalog-section">
-        <h2 data-i18n="s.site.catalog"></h2>
+        <div class="catalog-search">
+          <span class="catalog-search-icon" aria-hidden="true">⌕</span>
+          <input id="catalog-search" type="search" spellcheck="false" autocomplete="off" data-i18n-placeholder="cat.searchPh" data-i18n-aria="cat.searchPh" />
+        </div>
+        <div id="catalog-list"></div>
+        <p class="footer" data-i18n="cat.foot"></p>
+        <h2 class="custom-title" data-i18n="cat.custom"></h2>
         <div id="preset-chips"></div>
       </section>
 

@@ -8,6 +8,8 @@ fn dest(id: &str, name: &str, url: &str, icon: &str, order: usize) -> Destinatio
         icon: icon.to_string(),
         order,
         clip_prompt: String::new(),
+        url_template: None,
+        catalog_id: None,
     }
 }
 

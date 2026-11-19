@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod defaults;
 
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,13 @@ pub struct Destination {
     pub order: usize,
     #[serde(default)]
     pub clip_prompt: String,
+    /// Search address with `{q}`: the query opens the results page directly
+    /// instead of being typed into the site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_template: Option<String>,
+    /// Catalogue entry this destination was added from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
 }
 
 pub struct DestinationManager {
@@ -77,7 +85,18 @@ impl DestinationManager {
             let mut dests = self.destinations.lock().unwrap();
             if let Some(dest) = dests.iter_mut().find(|d| d.id == id) {
                 dest.name = name;
-                dest.url = url;
+                // A template stays unless the address itself changed; an
+                // address with {q} becomes the new template.
+                if url.contains("{q}") {
+                    let (home, template) = catalog::split_custom(&url);
+                    dest.url = home;
+                    dest.url_template = template;
+                } else {
+                    if url != dest.url {
+                        dest.url_template = None;
+                    }
+                    dest.url = url;
+                }
                 dest.icon = icon;
                 dest.clip_prompt = clip_prompt;
                 Some(dest.clone())
