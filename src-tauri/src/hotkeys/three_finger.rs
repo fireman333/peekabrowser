@@ -41,6 +41,15 @@ pub const MAX_TAP_DURATION: f64 = 0.30;
 pub const MAX_MOVEMENT: f32 = 0.05;
 /// Minimum time between two fired taps.
 pub const DEBOUNCE: f64 = 0.50;
+/// A tap whose fingers came down this soon after a key press is a palm or
+/// thumb brushing the trackpad while typing, not a lookup.
+pub const TYPING_QUIET: f64 = 1.0;
+
+/// Whether a tap of `tap_duration` seconds that just ended, `since_key`
+/// seconds after the last keyboard event, started while the user was typing.
+pub fn during_typing(since_key: f64, tap_duration: f64) -> bool {
+    since_key.is_finite() && since_key >= 0.0 && since_key < TYPING_QUIET + tap_duration
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Gesture {
@@ -53,19 +62,35 @@ struct Gesture {
     max_move: f32,
     /// A frame with exactly three fingers had unreadable positions.
     bad_positions: bool,
+    /// Largest contact size seen (MTTouch `size`; logged to calibrate palm rejection).
+    max_size: f32,
 }
 
 /// Recognizes a quick three-finger tap from a stream of touch frames.
 /// Feed every frame (including the empty one sent when all fingers lift).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TapDetector {
     gesture: Option<Gesture>,
     last_fire: Option<f64>,
+    /// Seconds since the last keyboard event (injected so tests don't read
+    /// the real keyboard).
+    since_key: fn() -> f64,
+}
+
+impl Default for TapDetector {
+    fn default() -> Self {
+        Self { gesture: None, last_fire: None, since_key: seconds_since_key_event }
+    }
 }
 
 impl TapDetector {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[cfg(test)]
+    fn with_key_clock(since_key: fn() -> f64) -> Self {
+        Self { since_key, ..Self::default() }
     }
 
     /// `t`: frame time in seconds (monotonic). `count`: fingers on the pad.
@@ -83,6 +108,7 @@ impl TapDetector {
             origin: None,
             max_move: 0.0,
             bad_positions: false,
+            max_size: 0.0,
         });
         g.max_count = g.max_count.max(count);
         if count == 3 {
@@ -101,6 +127,15 @@ impl TapDetector {
         false
     }
 
+    /// Record the largest contact size of the current frame (diagnostics only).
+    pub fn note_size(&mut self, size: f32) {
+        if let Some(g) = self.gesture.as_mut() {
+            if size.is_finite() {
+                g.max_size = g.max_size.max(size);
+            }
+        }
+    }
+
     fn finish(&mut self, g: Gesture, t: f64) -> bool {
         let Some(three_at) = g.three_at else { return false };
         let ok = g.max_count == 3
@@ -109,19 +144,24 @@ impl TapDetector {
             && !g.bad_positions
             && g.max_move < MAX_MOVEMENT
             && self.last_fire.is_none_or(|last| g.start - last >= DEBOUNCE);
-        if ok {
+        let since_key = (self.since_key)();
+        let typing = ok && during_typing(since_key, t - g.start);
+        if ok && !typing {
             self.last_fire = Some(t);
         } else {
             log::info!(
-                "three-finger: rejected gesture (max_fingers={}, spread={:.0}ms, duration={:.0}ms, move={:.3}, bad_pos={})",
+                "three-finger: rejected gesture (max_fingers={}, spread={:.0}ms, duration={:.0}ms, move={:.3}, bad_pos={}, size={:.2}, since_key={:.2}s{})",
                 g.max_count,
                 (three_at - g.start) * 1000.0,
                 (t - g.start) * 1000.0,
                 g.max_move,
-                g.bad_positions
+                g.bad_positions,
+                g.max_size,
+                since_key,
+                if typing { ", typing" } else { "" }
             );
         }
-        ok
+        ok && !typing
     }
 }
 
@@ -156,6 +196,31 @@ const MT_TOUCH_TIMESTAMP: usize = 8;
 const MT_TOUCH_STATE: usize = 20;
 const MT_TOUCH_POS_X: usize = 32;
 const MT_TOUCH_POS_Y: usize = 36;
+const MT_TOUCH_SIZE: usize = 48;
+
+/// Seconds since the last key press or modifier change in this login session
+/// (no permission needed; same source the system uses for idle time).
+/// Infinity if unavailable, which never suppresses a tap.
+#[cfg(target_os = "macos")]
+fn seconds_since_key_event() -> f64 {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+    }
+    const COMBINED_SESSION_STATE: i32 = 0;
+    const KEY_DOWN: u32 = 10;
+    const FLAGS_CHANGED: u32 = 12;
+    unsafe {
+        let k = CGEventSourceSecondsSinceLastEventType(COMBINED_SESSION_STATE, KEY_DOWN);
+        let f = CGEventSourceSecondsSinceLastEventType(COMBINED_SESSION_STATE, FLAGS_CHANGED);
+        k.min(f)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn seconds_since_key_event() -> f64 {
+    f64::INFINITY
+}
 
 /// Runtime check of the assumed layout: the first frames with two or more
 /// touches are cross-checked (every record's `frame` equals the callback's,
@@ -328,6 +393,16 @@ extern "C" fn contact_frame(device: MTDeviceRef, touches: *const u8, count: i32,
     if !layout_usable(touches, n, frame, timestamp) {
         return 0;
     }
+    let mut max_size = 0.0f32;
+    if !touches.is_null() {
+        for i in 0..n {
+            // SAFETY: as below; reads one f32 inside each 96-byte record.
+            let s = unsafe { std::ptr::read_unaligned(touches.add(i * MT_TOUCH_STRIDE + MT_TOUCH_SIZE) as *const f32) };
+            if s.is_finite() {
+                max_size = max_size.max(s);
+            }
+        }
+    }
     let centroid = if n == 0 || touches.is_null() {
         None
     } else {
@@ -356,7 +431,12 @@ extern "C" fn contact_frame(device: MTDeviceRef, touches: *const u8, count: i32,
         .ok()
         .and_then(|mut d| {
             d.as_mut()
-                .map(|m| m.entry(device as usize).or_default().on_frame(timestamp, n, centroid))
+                .map(|m| {
+                    let det = m.entry(device as usize).or_default();
+                    let fired = det.on_frame(timestamp, n, centroid);
+                    det.note_size(max_size);
+                    fired
+                })
         })
         .unwrap_or(false);
     if fired {
@@ -576,13 +656,13 @@ mod tests {
 
     #[test]
     fn valid_tap_fires_once() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         assert!(tap(&mut d, 10.0, 0.03, 0.15));
     }
 
     #[test]
     fn simultaneous_touchdown_fires() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         assert!(!d.on_frame(1.0, 3, C));
         assert!(!d.on_frame(1.05, 3, C));
         assert!(d.on_frame(1.1, 0, None));
@@ -590,19 +670,19 @@ mod tests {
 
     #[test]
     fn too_slow_does_not_fire() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         assert!(!tap(&mut d, 10.0, 0.03, 0.45));
     }
 
     #[test]
     fn staggered_touchdown_does_not_fire() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         assert!(!tap(&mut d, 10.0, 0.15, 0.25));
     }
 
     #[test]
     fn moved_swipe_does_not_fire() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         d.on_frame(1.0, 3, Some((0.40, 0.5)));
         d.on_frame(1.05, 3, Some((0.48, 0.5)));
         d.on_frame(1.10, 3, Some((0.60, 0.5)));
@@ -611,7 +691,7 @@ mod tests {
 
     #[test]
     fn small_jitter_still_fires() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         d.on_frame(1.0, 3, Some((0.50, 0.50)));
         d.on_frame(1.05, 3, Some((0.51, 0.49)));
         assert!(d.on_frame(1.1, 0, None));
@@ -619,7 +699,7 @@ mod tests {
 
     #[test]
     fn four_fingers_do_not_fire() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         d.on_frame(1.0, 3, C);
         d.on_frame(1.02, 4, C);
         d.on_frame(1.05, 3, C);
@@ -628,7 +708,7 @@ mod tests {
 
     #[test]
     fn two_fingers_do_not_fire() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         d.on_frame(1.0, 2, C);
         d.on_frame(1.05, 2, C);
         assert!(!d.on_frame(1.1, 0, None));
@@ -636,22 +716,38 @@ mod tests {
 
     #[test]
     fn unreadable_positions_do_not_fire() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         d.on_frame(1.0, 3, None);
         assert!(!d.on_frame(1.1, 0, None));
     }
 
     #[test]
     fn debounce_blocks_quick_second_tap() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         assert!(tap(&mut d, 10.0, 0.02, 0.12));
         assert!(!tap(&mut d, 10.3, 0.02, 0.12));
         assert!(tap(&mut d, 11.0, 0.02, 0.12));
     }
 
     #[test]
+    fn tap_while_typing_does_not_fire() {
+        let mut d = TapDetector::with_key_clock(|| 0.1);
+        assert!(!tap(&mut d, 10.0, 0.03, 0.15));
+    }
+
+    #[test]
+    fn typing_window() {
+        assert!(during_typing(0.2, 0.15), "key just before the tap");
+        assert!(during_typing(1.1, 0.15), "key just before fingers came down");
+        assert!(!during_typing(1.3, 0.15), "typing stopped well before");
+        assert!(!during_typing(f64::INFINITY, 0.15), "no key source");
+        assert!(!during_typing(f64::NAN, 0.15));
+        assert!(!during_typing(-1.0, 0.15));
+    }
+
+    #[test]
     fn lift_without_gesture_is_ignored() {
-        let mut d = TapDetector::new();
+        let mut d = TapDetector::with_key_clock(|| f64::INFINITY);
         assert!(!d.on_frame(1.0, 0, None));
     }
 }
