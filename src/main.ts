@@ -110,7 +110,8 @@ function addSiteItem(): HTMLElement {
   btn.title = t("rail.addSite");
   const iconWrap = document.createElement("span");
   iconWrap.className = "rail-icon";
-  iconWrap.innerHTML = '<span class="add-tile" aria-hidden="true">+</span>';
+  iconWrap.innerHTML =
+    '<span class="add-tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>';
   btn.append(iconWrap);
   btn.addEventListener("click", () => invoke("open_add_site").catch(() => {}));
   return btn;
